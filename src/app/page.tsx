@@ -499,12 +499,13 @@ export default function TeamsPage() {
 
   const copyPrompt = () => { if (!tournament) return; navigator.clipboard.writeText(generatePrompt(tournament.teams)); toast.success("Prompt copied!"); };
   const openGemini = () => {
-    if (!tournament) return;
-    const prompt = generatePrompt(tournament.teams);
-    navigator.clipboard.writeText(prompt)
-      .then(() => toast.success("Prompt copied! Paste it in Gemini"))
-      .catch(() => toast.error("Allow clipboard access to copy prompt"));
-    window.open("https://gemini.google.com/app", "_blank", "noopener,noreferrer");
+    const isAndroid = /android/i.test(navigator.userAgent);
+    if (isAndroid) {
+      // Intent URL: opens Gemini app if installed, falls back to Play Store
+      window.location.href = "intent://gemini.google.com/app#Intent;scheme=https;package=com.google.android.apps.bard;S.browser_fallback_url=https%3A%2F%2Fgemini.google.com%2Fapp;end";
+    } else {
+      window.open("https://gemini.google.com/app", "_blank", "noopener,noreferrer");
+    }
   };
   const pasteJson = async () => { try { processJson(await navigator.clipboard.readText()); } catch { toast.error("Allow clipboard access"); } };
 
