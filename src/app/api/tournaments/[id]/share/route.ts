@@ -16,19 +16,36 @@ async function uniqueCode(): Promise<string> {
   throw new Error("Could not generate unique code");
 }
 
-// POST /api/tournaments/[id]/share — generate a share token + short code
-export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+// POST /api/tournaments/[id]/share — upserts latest tournament data + generates share token/code
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await params;
+  const body = await req.json().catch(() => ({}));
+  const tournamentData = body.data; // latest data from client
+
   const row = await prisma.savedTournament.findFirst({ where: { id, userId: session.user.id } });
-  if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const token = row.shareToken ?? crypto.randomUUID();
-  const shortCode = row.shortCode ?? await uniqueCode();
+  const token = row?.shareToken ?? crypto.randomUUID();
+  const shortCode = row?.shortCode ?? await uniqueCode();
 
-  await prisma.savedTournament.update({ where: { id }, data: { shareToken: token, shortCode } });
+  if (row) {
+    await prisma.savedTournament.update({
+      where: { id },
+      data: {
+        shareToken: token,
+        shortCode,
+        // Always update data so share reflects the latest version
+        ...(tournamentData ? { data: tournamentData } : {}),
+      },
+    });
+  } else {
+    // First time syncing this tournament
+    await prisma.savedTournament.create({
+      data: { id, userId: session.user.id, data: tournamentData ?? {}, shareToken: token, shortCode },
+    });
+  }
 
   return NextResponse.json({ token, shortCode });
 }

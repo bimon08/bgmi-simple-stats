@@ -277,11 +277,14 @@ export default function TeamsPage() {
 
   const handleShare = async (t: Tournament) => {
     try {
-      const res = await fetch(`/api/tournaments/${t.id}/share`, { method: "POST" });
+      const res = await fetch(`/api/tournaments/${t.id}/share`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ data: t }), // always push latest data including geminiData
+      });
       if (!res.ok) { toast.error(res.status === 401 ? "Sign in to share" : "Share failed"); return; }
       const { token, shortCode } = await res.json();
       const url = `${window.location.origin}/t/${token}`;
-      // Copy code to clipboard immediately
       navigator.clipboard.writeText(shortCode).catch(() => {});
       setShareInfo({ code: shortCode, url, name: t.name });
       setShowShareModal(true);
@@ -364,10 +367,10 @@ export default function TeamsPage() {
   const openGemini = () => {
     if (!tournament) return;
     const prompt = generatePrompt(tournament.teams);
-    navigator.clipboard.writeText(prompt).catch(() => {});
-    const url = `https://gemini.google.com/app?q=${encodeURIComponent(prompt)}`;
-    window.open(url, "_blank", "noopener,noreferrer");
-    toast.success("Opening Gemini with prompt pre-filled!");
+    navigator.clipboard.writeText(prompt)
+      .then(() => toast.success("Prompt copied! Paste it in Gemini (Ctrl+V / ⌘V)"))
+      .catch(() => toast.error("Allow clipboard access to copy prompt"));
+    window.open("https://gemini.google.com/app", "_blank", "noopener,noreferrer");
   };
   const pasteJson = async () => { try { processJson(await navigator.clipboard.readText()); } catch { toast.error("Allow clipboard access"); } };
   const processJson = (text: string) => {
@@ -1358,8 +1361,8 @@ export default function TeamsPage() {
                   {/* Steps — always visible */}
                   <div className="space-y-3">
                     {[
-                      { step: "1", title: "Tap the button below", desc: "Opens Gemini with the prompt already typed in — one tap" },
-                      { step: "2", title: "Hit send", desc: "Send the pre-filled prompt first, before uploading anything" },
+                      { step: "1", title: "Tap the button below", desc: "Copies the prompt & opens Gemini — then paste it with ⌘V / long-press" },
+                      { step: "2", title: "Paste & send", desc: "Paste the copied prompt into Gemini and hit send" },
                       { step: "3", title: "Upload your screenshots", desc: "Reply with your match result screenshots in the next message" },
                       { step: "4", title: "Copy the JSON reply", desc: "Gemini responds with a JSON block — select and copy it" },
                       { step: "5", title: "Paste it here", desc: "Come back and tap the purple 'Paste' button above" },
@@ -1382,7 +1385,7 @@ export default function TeamsPage() {
                         onClick={openGemini}
                         className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold text-white press-scale"
                         style={{ background: "linear-gradient(135deg,#7c3aed,#9333ea)", boxShadow: "0 4px 20px rgba(124,58,237,0.4)" }}>
-                        Open Gemini with Prompt
+                        Open Gemini (copies prompt)
                       </button>
                       <button
                         onClick={pasteJson}
@@ -1391,7 +1394,7 @@ export default function TeamsPage() {
                         <ClipboardPaste className="h-4 w-4" /> Paste JSON from Gemini
                       </button>
                       <p className="text-[10px] text-center pt-0.5" style={{ color: "rgba(167,139,250,0.35)" }}>
-                        Prompt is pre-filled · just add screenshots &amp; send
+                        Prompt copied to clipboard · paste in Gemini with ⌘V / long-press
                       </p>
                     </div>
                   </div>
