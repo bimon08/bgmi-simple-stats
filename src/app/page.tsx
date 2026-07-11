@@ -7,7 +7,7 @@ import {
   Users, MoreHorizontal, FileDown, Database, Table2, Flame,
   ImageIcon, Pencil, UserPlus, ListX, Pen, Star, HelpCircle,
   Flag, ArrowRight, Save, Search, Tag, BarChart2, Hash,
-  ListOrdered, TrendingUp, MoreVertical,
+  ListOrdered, TrendingUp, MoreVertical, Phone,
 } from "lucide-react";
 import { toJpeg } from "html-to-image";
 import { toast } from "sonner";
@@ -56,10 +56,10 @@ export default function TeamsPage() {
   const [showAddScreen, setShowAddScreen] = useState(false);
   const [addScreenTab, setAddScreenTab] = useState<"add" | "entered">("add");
   const [addScreenMode, setAddScreenMode] = useState<"create" | "edit">("create");
-  const [addForm, setAddForm] = useState({ name: "", slot: "", tags: "" });
+  const [addForm, setAddForm] = useState({ name: "", slot: "", tags: "", phone: "" });
   const [playerInputs, setPlayerInputs] = useState<string[]>([""]);  
   const [editingTeam, setEditingTeam] = useState<Team | null>(null);
-  const [editTeamForm, setEditTeamForm] = useState({ name: "", slot: "", tags: "", players: "" });
+  const [editTeamForm, setEditTeamForm] = useState({ name: "", slot: "", tags: "", players: "", phone: "" });
   const [initialTeamCount, setInitialTeamCount] = useState(0);
   const [showSlots, setShowSlots] = useState(false);
   const [showStandings, setShowStandings] = useState(false);
@@ -79,6 +79,7 @@ export default function TeamsPage() {
   const [syncPickerTarget, setSyncPickerTarget] = useState<number>(0); // which row we're picking for
   const [startSlot, setStartSlot] = useState(3);
   const slotsRef = useRef<HTMLDivElement>(null);
+  const playerInputRefs = useRef<(HTMLInputElement | null)[]>([]);
   const standingsRef = useRef<HTMLDivElement>(null);
   const [isCapturing, setIsCapturing] = useState(false);
   const [standings, setStandings] = useState<StandingRow[]>([]);
@@ -88,30 +89,66 @@ export default function TeamsPage() {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
   const [showGuide, setShowGuide] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [shareInfo, setShareInfo] = useState<{ code: string; url: string; name: string } | null>(null);
+  const [showImportCode, setShowImportCode] = useState(false);
+  const [importCode, setImportCode] = useState("");
+  const [importLoading, setImportLoading] = useState(false);
 
   useEffect(() => { setTournaments(loadTournaments()); }, []);
 
-  // Native back-button support: push a history entry for each full-screen, pop to close
+  // Native back-button: push a history entry whenever any overlay opens, pop to close the top-most one
   useEffect(() => {
-    const anyOpen = showCreate || showAddScreen;
+    const anyOpen =
+      showCreate || showAddScreen || !!editingTeam ||
+      showStats || showStandings || showSlots ||
+      showPointSystem || showAdd || showEdit ||
+      showMore || showRename;
+
     if (anyOpen) {
       history.pushState({ overlay: true }, '');
     }
+
     const onPop = () => {
-      if (showAddScreen) { setShowAddScreen(false); return; }
-      if (showCreate) { setShowCreate(false); setCreateName(''); setRoundRobin(false); return; }
+      // Close in reverse-depth order (deepest first)
+      if (editingTeam)    { setEditingTeam(null); return; }
+      if (showStats)      { setShowStats(false); return; }
+      if (showStandings)  { setShowStandings(false); return; }
+      if (showSlots)      { setShowSlots(false); return; }
+      if (showPointSystem){ setShowPointSystem(false); return; }
+      if (showAdd)        { setShowAdd(false); return; }
+      if (showAddScreen)  { setShowAddScreen(false); return; }
+      if (showEdit)       { setShowEdit(false); return; }
+      if (showMore)       { setShowMore(false); return; }
+      if (showRename)     { setShowRename(false); return; }
+      if (showCreate)     { setShowCreate(false); setCreateName(''); setRoundRobin(false); return; }
     };
+
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showCreate, showAddScreen]);
+  }, [showCreate, showAddScreen, editingTeam, showStats, showStandings,
+      showSlots, showPointSystem, showAdd, showEdit, showMore, showRename]);
 
   const computeStandings = (t: Tournament) => {
-    if (!t.geminiData || !t.assignments) { setStandings([]); return; }
+    if (!t.geminiData) { setStandings([]); return; }
+    const assignMap = t.assignments ?? {};
     const rows: StandingRow[] = t.geminiData.groups.map((group) => {
-      const teamId = t.assignments![group.group];
+      const teamId = assignMap[group.group];
       const team = t.teams.find((tm) => tm.id === teamId);
-      return { teamId: teamId || group.group, teamName: team?.name || `Group ${group.group}`, group: group.group, players: group.players, totalPoints: group.totals.totalPoints, chickenDinners: group.totals.chickenDinners, placementPoints: group.totals.totalPlacementPoints, totalKills: group.totals.totalKills, lastMatchPosition: group.totals.lastMatchPosition, positions: group.matches.map((m) => m.position), matchCount: group.matches.length };
+      return {
+        teamId: teamId || group.group,
+        teamName: team?.name || group.group,
+        group: group.group,
+        players: group.players,
+        totalPoints: group.totals.totalPoints,
+        chickenDinners: group.totals.chickenDinners,
+        placementPoints: group.totals.totalPlacementPoints,
+        totalKills: group.totals.totalKills,
+        lastMatchPosition: group.totals.lastMatchPosition,
+        positions: group.matches.map((m) => m.position),
+        matchCount: group.matches.length,
+      };
     });
     rows.sort(compareTiebreaker);
     setStandings(rows);
@@ -145,7 +182,7 @@ export default function TeamsPage() {
     setTournaments((prev) => { const u = [...prev, t]; saveTournaments(u); return u; });
     setTournament(t);
     setCreateName(""); setRoundRobin(false); setShowCreate(false);
-    setAddForm({ name: "", slot: String(t.teams.length + 1), tags: "" });
+    setAddForm({ name: "", slot: String(t.teams.length + 1), tags: "", phone: "" });
     setAddScreenTab("add"); setAddScreenMode("create"); setShowAddScreen(true);
   };
 
@@ -158,7 +195,7 @@ export default function TeamsPage() {
     setTournaments((prev) => { const u = [...prev, t]; saveTournaments(u); return u; });
     setTournament(t);
     setShowCreate(false);
-    setAddForm({ name: "", slot: String(t.teams.length + 1), tags: "" });
+    setAddForm({ name: "", slot: String(t.teams.length + 1), tags: "", phone: "" });
     setAddScreenTab("add"); setAddScreenMode("create"); setShowAddScreen(true);
     toast.success(`Cloned "${source.name}" — add more teams below`);
   };
@@ -171,11 +208,12 @@ export default function TeamsPage() {
       name: addForm.name.trim(),
       slot: addForm.slot ? Number(addForm.slot) : undefined,
       players: players.length > 0 ? players : undefined,
+      phone: addForm.phone.trim() || undefined,
       paid: true,
     };
     const updated = { ...tournament, teams: [...tournament.teams, newTeam] };
     save(updated);
-    setAddForm({ name: "", slot: String(updated.teams.length + 1), tags: "" });
+    setAddForm({ name: "", slot: String(updated.teams.length + 1), tags: "", phone: "" });
     setPlayerInputs([""]);
     toast.success(`"${newTeam.name}" added!`);
   };
@@ -226,6 +264,7 @@ export default function TeamsPage() {
     const updated = tournament.teams.map((t) =>
       t.id === editingTeam.id
         ? { ...t, name: editTeamForm.name.trim() || t.name, tags: editTeamForm.tags || undefined,
+            phone: editTeamForm.phone.trim() || t.phone,
             players: editTeamForm.players.trim() ? editTeamForm.players.split(/[,\n]+/).map((p) => p.trim()).filter(Boolean) : t.players }
         : t
     );
@@ -235,6 +274,41 @@ export default function TeamsPage() {
   };
 
   const handleDeleteTournament = (id: string) => { setTournaments((prev) => deleteTournamentById(id, prev)); toast.success("Deleted"); };
+
+  const handleShare = async (t: Tournament) => {
+    try {
+      const res = await fetch(`/api/tournaments/${t.id}/share`, { method: "POST" });
+      if (!res.ok) { toast.error(res.status === 401 ? "Sign in to share" : "Share failed"); return; }
+      const { token, shortCode } = await res.json();
+      const url = `${window.location.origin}/t/${token}`;
+      // Copy code to clipboard immediately
+      navigator.clipboard.writeText(shortCode).catch(() => {});
+      setShareInfo({ code: shortCode, url, name: t.name });
+      setShowShareModal(true);
+    } catch (e: unknown) {
+      if ((e as Error).name !== "AbortError") toast.error("Share failed");
+    }
+  };
+
+  const handleImportByCode = async () => {
+    const code = importCode.trim().toUpperCase();
+    if (code.length !== 6) { toast.error("Enter a valid 6-character code"); return; }
+    setImportLoading(true);
+    try {
+      const res = await fetch(`/api/share/${code}`);
+      if (!res.ok) { toast.error("Code not found — check and try again"); return; }
+      const { tournament: t } = await res.json();
+      if (!t) { toast.error("Invalid code"); return; }
+      const cloned: Tournament = { ...t, id: crypto.randomUUID(), name: `${t.name} (imported)`, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+      const existing = loadTournaments();
+      const updated = [cloned, ...existing];
+      saveTournaments(updated);
+      setTournaments(updated);
+      setImportCode(""); setShowImportCode(false);
+      toast.success(`"${t.name}" imported!`);
+    } catch { toast.error("Import failed"); }
+    finally { setImportLoading(false); }
+  };
 
   const handleSync = async () => {
     setSyncing(true);
@@ -301,11 +375,35 @@ export default function TeamsPage() {
     try {
       const data = JSON.parse(text) as GeminiOutput;
       if (!data.groups || !Array.isArray(data.groups)) throw new Error("Invalid JSON");
-      const assigned: AssignedGroup[] = data.groups.map((g) => ({ ...g, teamId: assignments[g.group], teamName: tournament.teams.find((t) => t.id === assignments[g.group])?.name }));
-      setGroups(assigned); setMatchesDetected(data.matches_detected || 0);
-      const updated = { ...tournament, geminiData: data };
-      save(updated); if (updated.assignments) computeStandings(updated);
-      toast.success(`${data.groups.length} groups · ${data.matches_detected} matches`);
+
+      // Auto-assign: match group name → registered team name
+      const autoAssignments: Record<string, string> = { ...assignments };
+      data.groups.forEach((g) => {
+        if (autoAssignments[g.group]) return; // already manually assigned
+        const gLower = g.group.toLowerCase().trim();
+        // 1. Exact name match
+        let match = tournament.teams.find((t) => t.name.toLowerCase().trim() === gLower);
+        // 2. Contains match (e.g. "TSMent" matches "TSM" or vice versa)
+        if (!match) match = tournament.teams.find((t) => {
+          const tLower = t.name.toLowerCase().trim();
+          return tLower.includes(gLower) || gLower.includes(tLower);
+        });
+        if (match) autoAssignments[g.group] = match.id;
+      });
+
+      const assigned: AssignedGroup[] = data.groups.map((g) => ({
+        ...g,
+        teamId: autoAssignments[g.group],
+        teamName: tournament.teams.find((t) => t.id === autoAssignments[g.group])?.name,
+      }));
+      setGroups(assigned);
+      setAssignments(autoAssignments);
+      setMatchesDetected(data.matches_detected || 0);
+      const updated = { ...tournament, geminiData: data, assignments: autoAssignments };
+      save(updated);
+      computeStandings(updated);
+      const autoCount = Object.keys(autoAssignments).length;
+      toast.success(`${data.groups.length} groups · ${data.matches_detected} matches · ${autoCount} auto-assigned`);
     } catch (err: unknown) { toast.error((err as Error).message || "Invalid JSON"); }
   };
   const handlePaste = (e: React.ClipboardEvent) => { const text = e.clipboardData.getData("text"); if (text.trim().startsWith("{")) { e.preventDefault(); processJson(text); } };
@@ -449,12 +547,10 @@ export default function TeamsPage() {
                         <div className="flex flex-wrap gap-1.5">
                           <Pill label="Calculate" onPress={() => openAction(t, "calculate")} active />
                           <Pill label="Tables" onPress={() => openAction(t, "tables")} />
-                          <Pill label="Warheads" onPress={() => openAction(t, "warheads")} />
-                          <Pill label="Fraggers" onPress={() => openAction(t, "fraggers")} />
                           <Pill label="Team poster" onPress={() => openAction(t, "poster")} />
                           <Pill label="Slot list" onPress={() => openAction(t, "slots")} />
                           <Pill label="Certificate" onPress={() => openAction(t, "certificate")} />
-                          <Pill label="Share" icon={<Share2 className="h-3 w-3" />} onPress={() => toast("Share coming soon")} variant="share" />
+                          <Pill label="Share" icon={<Share2 className="h-3 w-3" />} onPress={() => handleShare(t)} variant="share" />
                           <Pill label="Edit" icon={<Pencil className="h-3 w-3" />} onPress={() => openAction(t, "edit")} variant="edit" />
                         </div>
                       </div>
@@ -487,6 +583,9 @@ export default function TeamsPage() {
         </button>
         <button onClick={() => setShowMore(!showMore)} className="h-12 w-12 rounded-2xl flex items-center justify-center shadow-lg press-scale" style={{ background: "#2a1f42", color: "#c4b5fd" }}>
           <MoreHorizontal className="h-5 w-5" />
+        </button>
+        <button onClick={() => { setShowMore(false); setShowImportCode(true); }} className="flex items-center gap-2 px-4 py-3.5 rounded-2xl font-bold text-sm shadow-lg press-scale" style={{ background: "#1e1535", color: "#c4b5fd", border: "1px solid rgba(124,58,237,0.3)" }}>
+          <Download className="h-4 w-4" /> Import
         </button>
         <button onClick={() => { setShowMore(false); setShowCreate(true); }} className="flex items-center gap-2 px-5 py-3.5 rounded-2xl font-bold text-sm text-white shadow-lg press-scale" style={{ background: "linear-gradient(135deg,#7c3aed,#9333ea)", boxShadow: "0 4px 24px rgba(124,58,237,0.45)" }}>
           <Plus className="h-4 w-4" /> Create
@@ -682,8 +781,24 @@ export default function TeamsPage() {
                       />
                     </div>
                     <p className="text-[9px] mt-2" style={{ color:"rgba(196,181,253,0.25)" }}>💡 Paste a full team block to auto-fill name &amp; players</p>
+                  </div>                  {/* Phone — optional */}
+                  <div className="rounded-2xl px-4 py-3.5 mb-3" style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.08)" }}>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <p className="text-[10px] font-bold tracking-widest" style={{ color:"rgba(139,92,246,0.7)" }}>LEADER PHONE</p>
+                      <span className="text-[9px]" style={{ color:"rgba(196,181,253,0.3)" }}>Optional</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Phone className="h-4 w-4 shrink-0" style={{ color:"rgba(196,181,253,0.4)" }} />
+                      <input
+                        type="tel"
+                        value={addForm.phone}
+                        onChange={(e) => setAddForm((f) => ({ ...f, phone: e.target.value }))}
+                        placeholder="e.g. +91 98765 43210"
+                        className="flex-1 bg-transparent text-white text-sm focus:outline-none"
+                        style={{ caretColor:"#a78bfa" }}
+                      />
+                    </div>
                   </div>
-
 
 
                   {/* Players */}
@@ -693,6 +808,7 @@ export default function TeamsPage() {
                       {playerInputs.map((val, i) => (
                         <div key={i} className="flex items-center gap-2">
                           <input
+                            ref={(el) => { playerInputRefs.current[i] = el; }}
                             value={val}
                             onChange={(e) => { const u = [...playerInputs]; u[i] = e.target.value; setPlayerInputs(u); }}
                             placeholder={`Player ${i + 1}`}
@@ -708,7 +824,14 @@ export default function TeamsPage() {
                       ))}
                     </div>
                     <button
-                      onClick={() => setPlayerInputs([...playerInputs, ""])}
+                      onClick={() => {
+                        const newInputs = [...playerInputs, ""];
+                        setPlayerInputs(newInputs);
+                        // Focus the new input in the same gesture to keep keyboard open
+                        requestAnimationFrame(() => {
+                          playerInputRefs.current[newInputs.length - 1]?.focus();
+                        });
+                      }}
                       className="mt-3 flex items-center gap-1.5 text-xs font-semibold press-scale"
                       style={{ color:"rgba(139,92,246,0.8)" }}
                     >
@@ -732,7 +855,7 @@ export default function TeamsPage() {
                   {teams.length === 0 ? (
                     <p className="text-center text-sm mt-10" style={{ color:"rgba(196,181,253,0.35)" }}>No teams added yet</p>
                   ) : teams.map((team, idx) => (
-                    <button key={team.id} onClick={() => { setEditingTeam(team); setEditTeamForm({ name: team.name, slot: String(team.slot ?? ""), tags: "", players: (team.players ?? []).join(", ") }); }} className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-left press-scale" style={{ background:"rgba(124,58,237,0.08)", border:"1px solid rgba(124,58,237,0.15)" }}>
+                    <button key={team.id} onClick={() => { setEditingTeam(team); setEditTeamForm({ name: team.name, slot: String(team.slot ?? ""), tags: "", players: (team.players ?? []).join(", "), phone: team.phone ?? "" }); }} className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-left press-scale" style={{ background:"rgba(124,58,237,0.08)", border:"1px solid rgba(124,58,237,0.15)" }}>
                       <div className="h-9 w-9 rounded-xl flex items-center justify-center shrink-0 text-white text-xs font-bold" style={{ background: avatarColors[idx % avatarColors.length] }}>
                         {initials(team.name)}
                       </div>
@@ -847,6 +970,14 @@ export default function TeamsPage() {
                 <div className="flex-1 flex items-center gap-2 px-4 py-3 rounded-2xl" style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.08)" }}>
                   <Pencil className="h-4 w-4 shrink-0" style={{ color:"rgba(196,181,253,0.4)" }} />
                   <input value={editTeamForm.name} onChange={(e) => setEditTeamForm((f) => ({ ...f, name: e.target.value }))} className="flex-1 bg-transparent text-white text-sm focus:outline-none" style={{ caretColor:"#a78bfa" }} />
+                </div>
+              </div>
+              {/* Phone */}
+              <div className="flex items-center gap-4 mb-4">
+                <p className="text-sm font-medium w-28 shrink-0" style={{ color:"rgba(196,181,253,0.6)" }}>Phone</p>
+                <div className="flex-1 flex items-center gap-2 px-4 py-3 rounded-2xl" style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.08)" }}>
+                  <Phone className="h-4 w-4 shrink-0" style={{ color:"rgba(196,181,253,0.4)" }} />
+                  <input type="tel" value={editTeamForm.phone} onChange={(e) => setEditTeamForm((f) => ({ ...f, phone: e.target.value }))} placeholder="Leader phone (optional)" className="flex-1 bg-transparent text-white text-sm focus:outline-none" style={{ caretColor:"#a78bfa" }} />
                 </div>
               </div>
               {/* Tags */}
@@ -1115,7 +1246,7 @@ export default function TeamsPage() {
                 {
                   icon: <UserPlus className="h-5 w-5" />, label: "Edit teams", action: () => {
                     setShowEdit(false);
-                    setAddForm({ name: "", slot: String((tournament?.teams.length ?? 0) + 1), tags: "" });
+                    setAddForm({ name: "", slot: String((tournament?.teams.length ?? 0) + 1), tags: "", phone: "" });
                     setPlayerInputs([""]);
                     setAddScreenTab("add");
                     setAddScreenTab("add"); setAddScreenMode("edit");
@@ -1383,13 +1514,7 @@ export default function TeamsPage() {
               <button onClick={() => captureRef(standingsRef, true, `${tournament.name}-${standingsTab}`)} disabled={isCapturing} className="text-white hover:text-blue-400 bg-black/60 backdrop-blur-md border border-white/20 p-2.5 rounded-xl transition-all disabled:opacity-50"><Download className="h-5 w-5" /></button>
               <button onClick={() => setShowStandings(false)} className="text-white hover:text-red-400 bg-black/60 backdrop-blur-md border border-white/20 p-2.5 rounded-xl transition-all"><X className="h-5 w-5" /></button>
             </div>
-            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 flex gap-1 bg-black/60 backdrop-blur-md border border-white/15 rounded-xl p-1">
-              {(["table", "warhead", "fraggers"] as const).map((tab) => (
-                <button key={tab} onClick={() => setStandingsTab(tab)} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${standingsTab === tab ? "text-white" : "text-white/50 hover:text-white"}`} style={standingsTab === tab ? { background: "linear-gradient(135deg,#7c3aed,#9333ea)" } : {}}>
-                  {tab === "table" ? "🏆 Table" : tab === "warhead" ? "💀 Warhead" : "🔫 Fraggers"}
-                </button>
-              ))}
-            </div>
+
             <div ref={standingsRef} className="relative w-full min-h-dvh flex items-center justify-center bg-cover bg-center py-20" style={{ backgroundImage: "url(/images/image.webp)" }}>
               <div className="absolute inset-0" style={{ background: "linear-gradient(to bottom,rgba(0,0,0,0.6),rgba(0,0,0,0.45),rgba(0,0,0,0.6))" }} />
               <div className="relative z-10 w-full max-w-5xl mx-auto px-4 sm:px-6">
@@ -1428,6 +1553,13 @@ export default function TeamsPage() {
                       </table>
                     </div>
                   );
+                  if (standings.length === 0) return (
+                    <div className="flex flex-col items-center justify-center py-16 gap-3">
+                      <span style={{ fontSize: "48px" }}>📊</span>
+                      <p className="text-white font-bold text-lg">No standings yet</p>
+                      <p className="text-sm" style={{ color: "rgba(255,255,255,0.5)" }}>Use <strong>Calculate</strong> to paste Gemini data first</p>
+                    </div>
+                  );
                   return <div className="flex gap-3 justify-center"><div className="flex-1">{renderTable(leftCol, 0)}</div>{rightCol.length > 0 && <div className="flex-1">{renderTable(rightCol, half)}</div>}</div>;
                 })()}
                 {standingsTab === "warhead" && (
@@ -1453,6 +1585,79 @@ export default function TeamsPage() {
           </div>
         );
       })()}
+      {/* SHARE CODE MODAL */}
+      {showShareModal && shareInfo && (
+        <div className="fixed inset-0 z-[70] flex items-end justify-center p-4" style={{ background: "rgba(0,0,0,0.7)" }} onClick={() => setShowShareModal(false)}>
+          <div className="w-full max-w-sm rounded-3xl p-6 anim-slide-up" style={{ background: "#13092b", border: "1px solid rgba(124,58,237,0.3)" }} onClick={(e) => e.stopPropagation()}>
+            <p className="text-xs font-bold tracking-widest text-center mb-1" style={{ color: "rgba(167,139,250,0.6)" }}>SHARE TOURNAMENT</p>
+            <p className="text-white font-bold text-center mb-5 truncate">{shareInfo.name}</p>
+
+            {/* Big code display */}
+            <div className="rounded-2xl p-5 mb-4 text-center" style={{ background: "rgba(124,58,237,0.12)", border: "1px solid rgba(124,58,237,0.3)" }}>
+              <p className="text-xs mb-2" style={{ color: "rgba(196,181,253,0.5)" }}>Share code (copied!)</p>
+              <p className="text-4xl font-black tracking-[0.25em] text-white" style={{ fontFamily: "monospace" }}>{shareInfo.code}</p>
+              <p className="text-[10px] mt-2" style={{ color: "rgba(196,181,253,0.4)" }}>Others can enter this code to import</p>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => { navigator.clipboard.writeText(shareInfo.code); toast.success("Code copied!"); }}
+                className="flex-1 py-3 rounded-xl font-bold text-sm press-scale"
+                style={{ background: "rgba(124,58,237,0.2)", color: "#c4b5fd", border: "1px solid rgba(124,58,237,0.3)" }}
+              >
+                Copy code
+              </button>
+              <button
+                onClick={() => {
+                  if (navigator.share) {
+                    navigator.share({ title: shareInfo.name, text: `Use code ${shareInfo.code} to import my tournament!`, url: shareInfo.url }).catch(() => {});
+                  } else {
+                    navigator.clipboard.writeText(shareInfo.url);
+                    toast.success("Link copied!");
+                  }
+                }}
+                className="flex-1 py-3 rounded-xl font-bold text-sm text-white press-scale"
+                style={{ background: "linear-gradient(135deg,#7c3aed,#9333ea)" }}
+              >
+                Share link
+              </button>
+            </div>
+            <button onClick={() => setShowShareModal(false)} className="w-full mt-3 py-2.5 rounded-xl text-sm font-medium" style={{ color: "rgba(196,181,253,0.4)" }}>Close</button>
+          </div>
+        </div>
+      )}
+
+      {/* IMPORT BY CODE MODAL */}
+      {showImportCode && (
+        <div className="fixed inset-0 z-[70] flex items-end justify-center p-4" style={{ background: "rgba(0,0,0,0.7)" }} onClick={() => setShowImportCode(false)}>
+          <div className="w-full max-w-sm rounded-3xl p-6 anim-slide-up" style={{ background: "#13092b", border: "1px solid rgba(124,58,237,0.3)" }} onClick={(e) => e.stopPropagation()}>
+            <p className="text-xs font-bold tracking-widest text-center mb-1" style={{ color: "rgba(167,139,250,0.6)" }}>IMPORT TOURNAMENT</p>
+            <p className="text-sm text-center mb-5" style={{ color: "rgba(196,181,253,0.5)" }}>Enter the 6-character code</p>
+
+            <input
+              type="text"
+              value={importCode}
+              onChange={(e) => setImportCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6))}
+              placeholder="ABC123"
+              maxLength={6}
+              autoFocus
+              className="w-full text-center text-3xl font-black tracking-[0.3em] py-4 rounded-2xl mb-4 bg-transparent focus:outline-none"
+              style={{ background: "rgba(124,58,237,0.1)", border: "1px solid rgba(124,58,237,0.3)", color: "white", caretColor: "#a78bfa", fontFamily: "monospace" }}
+              onKeyDown={(e) => { if (e.key === "Enter" && importCode.length === 6) handleImportByCode(); }}
+            />
+
+            <button
+              onClick={handleImportByCode}
+              disabled={importCode.length !== 6 || importLoading}
+              className="w-full py-3.5 rounded-xl font-bold text-sm text-white press-scale disabled:opacity-40"
+              style={{ background: "linear-gradient(135deg,#7c3aed,#9333ea)" }}
+            >
+              {importLoading ? "Importing…" : "Import"}
+            </button>
+            <button onClick={() => { setShowImportCode(false); setImportCode(""); }} className="w-full mt-3 py-2.5 rounded-xl text-sm font-medium" style={{ color: "rgba(196,181,253,0.4)" }}>Cancel</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

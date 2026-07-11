@@ -10,8 +10,8 @@ export function generatePrompt(teams: Team[]): string {
   const rosterSection = hasTeams
     ? `\n═══════════════════════════════════════
 REGISTERED TEAMS (${teams.length} teams)
-Match scoreboard players to these rosters to identify each team.
-Use the registered team name as the "group" value in the output.
+Try to match scoreboard players to these rosters. Best-effort — partial matches are fine.
+Use the registered team name as the "group" value when you can identify the team.
 ═══════════════════════════════════════
 ${teams.map((t, i) => {
   const playerList = (t.players && t.players.length > 0)

@@ -50,11 +50,13 @@ model Transaction {
 }
 
 model SavedTournament {
-  id        String   @id
-  userId    String   @map("user_id")
-  data      Json
-  updatedAt DateTime @updatedAt @map("updated_at")
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id          String   @id
+  userId      String   @map("user_id")
+  data        Json
+  shareToken  String?  @unique @map("share_token")
+  shortCode   String?  @unique @map("short_code")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("saved_tournaments")
 }
