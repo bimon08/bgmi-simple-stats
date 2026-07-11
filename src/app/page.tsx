@@ -7,7 +7,7 @@ import {
   Users, MoreHorizontal, FileDown, Database, Table2, Flame,
   ImageIcon, Pencil, UserPlus, ListX, Pen, Star, HelpCircle,
   Flag, ArrowRight, Save, Search, Tag, BarChart2, Hash,
-  ListOrdered, TrendingUp, MoreVertical, Phone,
+  ListOrdered, TrendingUp, MoreVertical, Phone, RefreshCw,
 } from "lucide-react";
 import { toJpeg } from "html-to-image";
 import { toast } from "sonner";
@@ -73,8 +73,9 @@ export default function TeamsPage() {
   const [showStats, setShowStats] = useState(false);
   const [inputs, setInputs] = useState<{ name: string; phone: string; players: string; showPhone: boolean }[]>([{ name: "", phone: "", players: "", showPhone: false }]);
   const [syncedPlayers, setSyncedPlayers] = useState<{ playerName: string; phone: string | null }[]>([]);
-  const [syncing, setSyncing] = useState(false);
-  const [lastSynced, setLastSynced] = useState<string | null>(null);
+  type SyncStatus = 'idle' | 'pending' | 'syncing' | 'offline' | 'synced';
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
+  const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showSyncPicker, setShowSyncPicker] = useState(false);
   const [syncPickerTarget, setSyncPickerTarget] = useState<number>(0); // which row we're picking for
   const [startSlot, setStartSlot] = useState(3);
@@ -95,7 +96,44 @@ export default function TeamsPage() {
   const [importCode, setImportCode] = useState("");
   const [importLoading, setImportLoading] = useState(false);
 
-  useEffect(() => { setTournaments(loadTournaments()); }, []);
+  // Load local immediately, then silently pull + merge from DB on mount
+  useEffect(() => {
+    const local = loadTournaments();
+    setTournaments(local);
+    fetch("/api/tournaments")
+      .then((r) => r.ok ? r.json() : null)
+      .then((json) => {
+        if (!json?.tournaments) return;
+        const remote: Tournament[] = json.tournaments;
+        const localMap  = new Map(local.map((t) => [t.id, t]));
+        const remoteMap = new Map(remote.map((t) => [t.id, t]));
+        const allIds = new Set([...localMap.keys(), ...remoteMap.keys()]);
+        const merged: Tournament[] = [];
+        allIds.forEach((id) => {
+          const l = localMap.get(id);
+          const r = remoteMap.get(id);
+          if (!l) { merged.push(r!); return; }
+          if (!r) { merged.push(l);  return; }
+          const lTs = l.updatedAt ?? l.createdAt ?? "";
+          const rTs = r.updatedAt ?? r.createdAt ?? "";
+          merged.push(lTs >= rTs ? l : r);
+        });
+        saveTournaments(merged);
+        setTournaments(merged);
+        setSyncStatus('synced');
+      })
+      .catch(() => {}); // fail silently if offline on load
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Retry auto-sync when network comes back
+  useEffect(() => {
+    const onOnline = () => { if (syncStatus === 'offline') scheduleSyncDebounce(); };
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncStatus]);
+
 
   // Native back-button: push a history entry whenever any overlay opens, pop to close the top-most one
   useEffect(() => {
@@ -155,9 +193,58 @@ export default function TeamsPage() {
   };
 
   const save = useCallback((t: Tournament) => {
-    setTournament(t);
-    setTournaments((prev) => upsertTournament(t, prev));
+    const updated = { ...t, updatedAt: new Date().toISOString() };
+    setTournament(updated);
+    setTournaments((prev) => upsertTournament(updated, prev));
+    scheduleSyncDebounce(); // auto-push after 2.5s idle
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const doSync = async (showToast = false) => {
+    if (!navigator.onLine) { setSyncStatus('offline'); return; }
+    setSyncStatus('syncing');
+    try {
+      const local = loadTournaments();
+      // Pull → merge → push
+      const pullRes = await fetch("/api/tournaments");
+      if (!pullRes.ok) throw new Error(pullRes.status === 401 ? "Sign in to sync" : "Sync failed");
+      const { tournaments: remote } = await pullRes.json() as { tournaments: Tournament[] };
+      const remoteMap = new Map(remote.map((t: Tournament) => [t.id, t]));
+      const localMap  = new Map(local.map((t) => [t.id, t]));
+      const allIds = new Set([...localMap.keys(), ...remoteMap.keys()]);
+      const merged: Tournament[] = [];
+      allIds.forEach((id) => {
+        const l = localMap.get(id);
+        const r = remoteMap.get(id);
+        if (!l) { merged.push(r!); return; }
+        if (!r) { merged.push(l);  return; }
+        merged.push((l.updatedAt ?? "") >= (r.updatedAt ?? "") ? l : r);
+      });
+      const pushRes = await fetch("/api/tournaments", {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tournaments: merged }),
+      });
+      if (!pushRes.ok) throw new Error("Sync failed");
+      saveTournaments(merged);
+      setTournaments(merged);
+      setSyncStatus('synced');
+      if (showToast) toast.success(`Synced ☁️`);
+    } catch {
+      setSyncStatus('offline');
+      if (showToast) toast.error("Sync failed — will retry when online");
+    }
+  };
+
+  const scheduleSyncDebounce = () => {
+    setSyncStatus('pending');
+    if (syncTimer.current) clearTimeout(syncTimer.current);
+    syncTimer.current = setTimeout(() => doSync(false), 2500);
+  };
+
+  const handleSync = () => {
+    if (syncTimer.current) { clearTimeout(syncTimer.current); syncTimer.current = null; }
+    doSync(true);
+  };
 
   const openAction = (t: Tournament, action: string) => {
     setTournament(t); setOpenDropdown(null); setExpandedGroups(new Set());
@@ -200,6 +287,12 @@ export default function TeamsPage() {
     toast.success(`Cloned "${source.name}" — add more teams below`);
   };
 
+  // Deduplicate player names case-insensitively, preserving first occurrence
+  const uniquePlayers = (players: string[]): string[] => {
+    const seen = new Set<string>();
+    return players.filter((p) => { const k = p.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
+  };
+
   const handleAddTeamToScreen = () => {
     if (!tournament || !addForm.name.trim()) return;
     const players = playerInputs.map((p) => p.trim()).filter(Boolean);
@@ -207,7 +300,7 @@ export default function TeamsPage() {
       id: crypto.randomUUID(),
       name: addForm.name.trim(),
       slot: addForm.slot ? Number(addForm.slot) : undefined,
-      players: players.length > 0 ? players : undefined,
+      players: players.length > 0 ? uniquePlayers(players) : undefined,
       phone: addForm.phone.trim() || undefined,
       paid: true,
     };
@@ -265,7 +358,9 @@ export default function TeamsPage() {
       t.id === editingTeam.id
         ? { ...t, name: editTeamForm.name.trim() || t.name, tags: editTeamForm.tags || undefined,
             phone: editTeamForm.phone.trim() || t.phone,
-            players: editTeamForm.players.trim() ? editTeamForm.players.split(/[,\n]+/).map((p) => p.trim()).filter(Boolean) : t.players }
+            players: editTeamForm.players.trim()
+              ? uniquePlayers(editTeamForm.players.split(/[,\n]+/).map((p) => p.trim()).filter(Boolean))
+              : t.players }
         : t
     );
     save({ ...tournament, teams: updated });
@@ -313,26 +408,7 @@ export default function TeamsPage() {
     finally { setImportLoading(false); }
   };
 
-  const handleSync = async () => {
-    setSyncing(true);
-    try {
-      const local = loadTournaments();
-      const pushRes = await fetch("/api/tournaments", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tournaments: local }) });
-      if (!pushRes.ok) throw new Error(pushRes.status === 401 ? "Please sign in to sync" : "Sync failed");
-      const pullRes = await fetch("/api/tournaments");
-      if (!pullRes.ok) throw new Error("Sync failed");
-      const { tournaments: remote } = await pullRes.json();
-      const merged = mergeTournaments(local, remote);
-      saveTournaments(merged);
-      setTournaments(merged);
-      setLastSynced(new Date().toLocaleTimeString());
-      toast.success(`Synced — ${merged.length} tournament${merged.length !== 1 ? "s" : ""}`);
-    } catch (e: unknown) {
-      toast.error((e as Error).message || "Sync failed");
-    } finally {
-      setSyncing(false);
-    }
-  };
+
 
   const handleDelete = (id: string) => { if (!tournament) return; save({ ...tournament, teams: tournament.teams.filter((t) => t.id !== id) }); toast.success("Removed"); };
   const addRow = () => setInputs([...inputs.map((r) => ({ ...r, showPhone: false })), { name: "", phone: "", players: "", showPhone: false }]);
@@ -368,7 +444,7 @@ export default function TeamsPage() {
     if (!tournament) return;
     const prompt = generatePrompt(tournament.teams);
     navigator.clipboard.writeText(prompt)
-      .then(() => toast.success("Prompt copied! Paste it in Gemini (Ctrl+V / ⌘V)"))
+      .then(() => toast.success("Prompt copied! Paste it in Gemini"))
       .catch(() => toast.error("Allow clipboard access to copy prompt"));
     window.open("https://gemini.google.com/app", "_blank", "noopener,noreferrer");
   };
@@ -402,11 +478,36 @@ export default function TeamsPage() {
       setGroups(assigned);
       setAssignments(autoAssignments);
       setMatchesDetected(data.matches_detected || 0);
-      const updated = { ...tournament, geminiData: data, assignments: autoAssignments };
+
+      // Enrich team rosters with players Gemini discovered
+      // Build a set of all players already registered in OTHER teams (cross-team dedup)
+      const allRegistered = new Map<string, string>(); // lowercase name → teamId
+      tournament.teams.forEach((team) =>
+        (team.players ?? []).forEach((p) => allRegistered.set(p.toLowerCase(), team.id))
+      );
+
+      const enrichedTeams = tournament.teams.map((team) => {
+        const matchedGroup = data.groups.find((g) => autoAssignments[g.group] === team.id);
+        if (!matchedGroup) return team;
+        const discovered = Object.keys(matchedGroup.players);
+        const existing = team.players ?? [];
+        const existingLower = new Set(existing.map((p) => p.toLowerCase()));
+        const newPlayers = discovered.filter((p) => {
+          const k = p.toLowerCase();
+          if (existingLower.has(k)) return false; // already on this team
+          const owner = allRegistered.get(k);
+          return !owner || owner === team.id; // skip if owned by a different team
+        });
+        if (newPlayers.length === 0) return team;
+        return { ...team, players: uniquePlayers([...existing, ...newPlayers]) };
+      });
+
+      const updated = { ...tournament, teams: enrichedTeams, geminiData: data, assignments: autoAssignments };
       save(updated);
       computeStandings(updated);
       const autoCount = Object.keys(autoAssignments).length;
-      toast.success(`${data.groups.length} groups · ${data.matches_detected} matches · ${autoCount} auto-assigned`);
+      const enriched = enrichedTeams.filter((t, i) => t !== tournament.teams[i]).length;
+      toast.success(`${data.groups.length} groups · ${data.matches_detected} matches · ${autoCount} assigned${enriched ? ` · ${enriched} rosters updated` : ""}`);
     } catch (err: unknown) { toast.error((err as Error).message || "Invalid JSON"); }
   };
   const handlePaste = (e: React.ClipboardEvent) => { const text = e.clipboardData.getData("text"); if (text.trim().startsWith("{")) { e.preventDefault(); processJson(text); } };
@@ -480,16 +581,7 @@ export default function TeamsPage() {
           <div className="rounded-2xl p-5 anim-slide-up" style={{ background: "#150e25", border: "1px solid rgba(124,58,237,0.18)", animationDelay: "60ms" }}>
             <div className="flex justify-around">
               <QuickBtn icon={<Users className="h-5 w-5" />} label={"Create\nTeam card"} onClick={() => setShowCreate(true)} />
-              <QuickBtn icon={<FileDown className="h-5 w-5" />} label={"Import\nTourney"} onClick={() => {
-                const s = prompt("Paste exported JSON:");
-                if (!s) return;
-                try {
-                  const parsed = JSON.parse(s);
-                  const list: Tournament[] = Array.isArray(parsed) ? parsed : [parsed];
-                  setTournaments((prev) => { let cur = [...prev]; list.forEach((t) => { cur = upsertTournament(t, cur); }); return cur; });
-                  toast.success("Imported!");
-                } catch { toast.error("Invalid JSON"); }
-              }} />
+              <QuickBtn icon={<FileDown className="h-5 w-5" />} label={"Import\nTourney"} onClick={() => setShowImportCode(true)} />
               <QuickBtn icon={<Database className="h-5 w-5" />} label={"Import\nTeam card"} onClick={() => toast("Coming soon")} />
               <QuickBtn icon={<Flame className="h-5 w-5" />} label={"Merge\nTourney"} onClick={() => toast("Coming soon")} />
             </div>
@@ -500,7 +592,22 @@ export default function TeamsPage() {
         <section>
           <div className="flex items-center gap-2 mb-3">
             <div className="w-1 h-4 rounded-full" style={{ background: "#7c3aed" }} />
-            <span className="text-sm font-bold text-white">All Tournaments</span>
+            <span className="text-sm font-bold text-white flex-1">All Tournaments</span>
+            <button
+              onClick={handleSync}
+              disabled={syncStatus === 'syncing'}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold press-scale disabled:opacity-60 transition-all"
+              style={{
+                background: syncStatus === 'offline' ? "rgba(251,146,60,0.15)" : "rgba(124,58,237,0.15)",
+                color: syncStatus === 'offline' ? "rgb(251,146,60)" : syncStatus === 'synced' ? "rgb(74,222,128)" : "rgba(167,139,250,0.8)",
+                border: `1px solid ${ syncStatus === 'offline' ? 'rgba(251,146,60,0.3)' : syncStatus === 'synced' ? 'rgba(74,222,128,0.3)' : 'rgba(124,58,237,0.2)'}`,
+              }}
+            >
+              {syncStatus === 'syncing' || syncStatus === 'pending'
+                ? <div className={`h-3 w-3 rounded-full border-2 border-current border-t-transparent ${syncStatus === 'syncing' ? 'animate-spin' : 'animate-spin opacity-50'}`} />
+                : <RefreshCw className="h-3 w-3" />}
+              {syncStatus === 'syncing' ? "Syncing…" : syncStatus === 'pending' ? "Saving…" : syncStatus === 'offline' ? "Offline" : syncStatus === 'synced' ? "Synced" : "Sync"}
+            </button>
           </div>
           {tournaments.length === 0 && (
             <div className="text-center py-20">
@@ -527,7 +634,14 @@ export default function TeamsPage() {
                     </div>
                     <div className="flex-1 min-w-0 text-left">
                       <p className="text-sm font-bold text-white truncate">{t.name}</p>
-                      <p className="text-xs mt-0.5" style={{ color: "rgba(167,139,250,0.5)" }}>Total teams: {t.teams.length}</p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <p className="text-xs" style={{ color: "rgba(167,139,250,0.5)" }}>Teams: {t.teams.length}</p>
+                        {t.updatedAt && (
+                          <span className="text-[10px]" style={{ color: "rgba(167,139,250,0.3)" }}>
+                            · {new Date(t.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <button
                       onClick={(e) => { e.stopPropagation(); handleDeleteTournament(t.id); }}
@@ -581,14 +695,8 @@ export default function TeamsPage() {
             ))}
           </div>
         )}
-        <button onClick={handleSync} disabled={syncing} title={lastSynced ? `Last synced ${lastSynced}` : "Sync tournaments"} className="h-12 w-12 rounded-2xl flex items-center justify-center shadow-lg press-scale disabled:opacity-50" style={{ background: "#2a1f42", color: syncing ? "#a78bfa" : "#c4b5fd" }}>
-          {syncing ? <div className="h-4 w-4 rounded-full border-2 border-violet-400 border-t-transparent animate-spin" /> : <Download className="h-5 w-5 rotate-180" />}
-        </button>
         <button onClick={() => setShowMore(!showMore)} className="h-12 w-12 rounded-2xl flex items-center justify-center shadow-lg press-scale" style={{ background: "#2a1f42", color: "#c4b5fd" }}>
           <MoreHorizontal className="h-5 w-5" />
-        </button>
-        <button onClick={() => { setShowMore(false); setShowImportCode(true); }} className="flex items-center gap-2 px-4 py-3.5 rounded-2xl font-bold text-sm shadow-lg press-scale" style={{ background: "#1e1535", color: "#c4b5fd", border: "1px solid rgba(124,58,237,0.3)" }}>
-          <Download className="h-4 w-4" /> Import
         </button>
         <button onClick={() => { setShowMore(false); setShowCreate(true); }} className="flex items-center gap-2 px-5 py-3.5 rounded-2xl font-bold text-sm text-white shadow-lg press-scale" style={{ background: "linear-gradient(135deg,#7c3aed,#9333ea)", boxShadow: "0 4px 24px rgba(124,58,237,0.45)" }}>
           <Plus className="h-4 w-4" /> Create
@@ -1361,7 +1469,7 @@ export default function TeamsPage() {
                   {/* Steps — always visible */}
                   <div className="space-y-3">
                     {[
-                      { step: "1", title: "Tap the button below", desc: "Copies the prompt & opens Gemini — then paste it with ⌘V / long-press" },
+                      { step: "1", title: "Tap the button below", desc: "Copies the prompt & opens Gemini — then paste it in the chat" },
                       { step: "2", title: "Paste & send", desc: "Paste the copied prompt into Gemini and hit send" },
                       { step: "3", title: "Upload your screenshots", desc: "Reply with your match result screenshots in the next message" },
                       { step: "4", title: "Copy the JSON reply", desc: "Gemini responds with a JSON block — select and copy it" },
@@ -1394,7 +1502,7 @@ export default function TeamsPage() {
                         <ClipboardPaste className="h-4 w-4" /> Paste JSON from Gemini
                       </button>
                       <p className="text-[10px] text-center pt-0.5" style={{ color: "rgba(167,139,250,0.35)" }}>
-                        Prompt copied to clipboard · paste in Gemini with ⌘V / long-press
+                        Prompt copied to clipboard · paste in Gemini
                       </p>
                     </div>
                   </div>
