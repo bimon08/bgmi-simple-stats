@@ -1,21 +1,132 @@
 @import "tailwindcss";
 @config "../../tailwind.config.ts";
 
+/* ── Layout tokens ── */
+:root {
+  --top-bar-h: 48px;   /* height of the sticky top app bar */
+  --bottom-nav-h: 64px; /* height of the fixed bottom nav   */
+}
+
 * {
   box-sizing: border-box;
 }
 
 body {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
-  background: #09090b;
+  background: #0c0914;
   color: #fafafa;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  overscroll-behavior: none;
+  /* Global safe-area padding so NO page is ever covered */
+  padding-top: var(--top-bar-h);
+  padding-bottom: var(--bottom-nav-h);
 }
 
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+/* Hide bottom nav when any modal/sheet is open */
+body[data-modal="open"] nav {
+  transform: translateY(100%);
+}
 
-::selection { background: rgba(245,158,11,0.3); color: white; }
+/* Smooth scrolling */
+:root { scroll-behavior: smooth; }
+
+/* Scrollbars */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(124,58,237,0.2); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(124,58,237,0.4); }
+::selection { background: rgba(124,58,237,0.35); color: white; }
+
+/* ── Global button feel ── */
+button, a { -webkit-tap-highlight-color: transparent; }
+
+/* ── Keyframes ── */
+@keyframes slideUp {
+  from { transform: translateY(40px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+@keyframes slideUpSheet {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes scaleIn {
+  from { transform: scale(0.92) translateY(8px); opacity: 0; }
+  to   { transform: scale(1)    translateY(0);   opacity: 1; }
+}
+@keyframes popIn {
+  0%   { transform: scale(0.85); opacity: 0; }
+  70%  { transform: scale(1.03); opacity: 1; }
+  100% { transform: scale(1);    opacity: 1; }
+}
+
+/* ── Utility classes ── */
+.anim-slide-up   { animation: slideUp      240ms cubic-bezier(0.22,1,0.36,1) both; }
+.anim-sheet-up   { animation: slideUpSheet 320ms cubic-bezier(0.22,1,0.36,1) both; }
+.anim-fade-in    { animation: fadeIn       200ms ease both; }
+.anim-scale-in   { animation: scaleIn      220ms cubic-bezier(0.34,1.56,0.64,1) both; }
+.anim-pop-in     { animation: popIn        280ms cubic-bezier(0.34,1.56,0.64,1) both; }
+
+@keyframes slideInLeft {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(0); }
+}
+
+/* ── Press / tap ripple feel ── */
+.press-scale { transition: transform 120ms cubic-bezier(0.34,1.56,0.64,1); }
+.press-scale:active { transform: scale(0.94); }
+
+/* ── PointCalc-style range slider ── */
+.pc-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 24px;          /* taller hit target */
+  background: transparent;
+  outline: none;
+  cursor: pointer;
+  padding: 0;
+}
+/* Filled track — uses --fill custom prop set inline per slider */
+.pc-slider::-webkit-slider-runnable-track {
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(
+    to right,
+    #9b59d6 var(--fill, 0%),
+    rgba(80, 40, 120, 0.45) var(--fill, 0%)
+  );
+}
+.pc-slider::-moz-range-track {
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(80, 40, 120, 0.45);
+}
+.pc-slider::-moz-range-progress {
+  height: 8px;
+  border-radius: 4px;
+  background: #9b59d6;
+}
+/* Thumb — thin vertical bar, matching PointCalc */
+.pc-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 4px;
+  height: 28px;
+  border-radius: 2px;
+  background: #b16af0;
+  margin-top: -10px;
+  box-shadow: 0 0 6px rgba(177,106,240,0.6);
+}
+.pc-slider::-moz-range-thumb {
+  width: 4px;
+  height: 28px;
+  border-radius: 2px;
+  background: #b16af0;
+  border: none;
+  box-shadow: 0 0 6px rgba(177,106,240,0.6);
+}

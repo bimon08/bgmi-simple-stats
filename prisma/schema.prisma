@@ -1,0 +1,49 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  name      String?
+  image     String?
+  rules     String[] @default([])
+  createdAt DateTime @default(now()) @map("created_at")
+  wallets   Wallet[]
+
+  @@map("users")
+}
+
+model Wallet {
+  id           String        @id @default(uuid())
+  userId       String        @map("user_id")
+  playerName   String        @map("player_name")
+  shareToken   String        @unique @default(uuid()) @map("share_token")
+  phone        String?
+  balance      Int           @default(0)
+  createdAt    DateTime      @default(now()) @map("created_at")
+  transactions Transaction[]
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("wallets")
+}
+
+model Transaction {
+  id        String   @id @default(uuid())
+  walletId  String   @map("wallet_id")
+  amount    Int
+  note      String   @default("")
+  createdAt DateTime @default(now()) @map("created_at")
+  wallet    Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@map("transactions")
+}

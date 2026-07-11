@@ -2,10 +2,13 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { Providers } from "./providers";
 import { PostHogProvider } from "@/components/posthog-provider";
+import { BottomNav } from "@/components/bottom-nav";
+import { GlobalMenu } from "@/components/global-menu";
+import { AuthProvider } from "@/components/auth-provider";
 
 export const metadata: Metadata = {
-  title: "BGMI Simple Stats",
-  description: "Simple BGMI tournament stats tool",
+  title: "ScoreCalc — Tournament Toolkit",
+  description: "Free BGMI tournament points calculator, standings, warhead & fragger cards",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -14,15 +17,19 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Dancing+Script:wght@700&display=swap" rel="stylesheet" />
       </head>
       <body>
         <PostHogProvider>
-          <Providers>
-            <main className="max-w-5xl mx-auto px-4 sm:px-6">
-              {children}
-            </main>
-          </Providers>
+          <AuthProvider>
+            <Providers>
+              <main>
+                {children}
+              </main>
+              <GlobalMenu />
+              <BottomNav />
+            </Providers>
+          </AuthProvider>
         </PostHogProvider>
       </body>
     </html>
