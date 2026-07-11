@@ -60,10 +60,12 @@ For each match, read every position block (#1 through #14):
   - Each player's kills (number before "finishes")
 
 STEP 3 — IDENTIFY TEAMS
+**CRITICAL: Each position block on screen = exactly ONE group in the JSON. NEVER merge two position blocks into one group.**
 Match the players you see on screen to the registered rosters above.
 - Some teams have a full player list — match any of those names
 - Some teams have only 1 name (the leader) — if that one name appears on screen, ALL players in that same position block belong to that team
 - If you cannot match any player in a position block to any registered team → use the next available letter (A, B, C …)
+- If players from two different position blocks seem similar, they are STILL TWO SEPARATE GROUPS — do NOT merge them
 Track recurring player groups across matches — same players = same team.
 
 **Do NOT calculate any points.** Only output raw positions and kills.
@@ -98,6 +100,7 @@ OUTPUT FORMAT — Return ONLY this JSON
 IMPORTANT RULES
 ═══════════════════════════════════════
 
+- **ONE position block = ONE group. Never combine two blocks into one group entry.**
 - Do NOT include placementPoints, matchPoints, teamKills, totals, or rank in the output
 - Player names: EXACTLY as on screen — keep ALL Unicode, symbols, foreign chars
 - "N finishes" = N kills. Double-check — stylized font can be tricky

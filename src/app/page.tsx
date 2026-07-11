@@ -1716,20 +1716,18 @@ export default function TeamsPage() {
                         })()}
                       </div>
                       {isExpanded && (
-                        <div className="px-4 pb-3 space-y-1.5 border-t border-zinc-800/50 pt-3">
+                        <div className="px-4 pb-3 pt-2 border-t border-zinc-800/40 space-y-2">
                           {group.matches.map((m) => (
-                            <div key={m.match} className="bg-zinc-800/30 rounded-lg p-2.5">
-                              <div className="flex items-center gap-2 mb-1.5 text-[11px]">
-                                <span className="font-semibold text-zinc-300">Match {m.match}</span>
-                                <span className={`font-bold ${m.position === 1 ? "text-violet-400" : "text-zinc-400"}`}>#{m.position}</span>
-                                <span className="text-zinc-600">{m.matchPoints} pts ({m.placementPoints}pp + {m.teamKills}k)</span>
+                            <div key={m.match} className="pl-3 border-l-2" style={{ borderColor: m.position === 1 ? "#7c3aed" : "rgba(63,63,70,0.6)" }}>
+                              <div className="flex items-center gap-2 mb-1 text-[11px]">
+                                <span className="font-bold text-zinc-400">M{m.match}</span>
+                                <span className={`font-bold ${m.position === 1 ? "text-violet-400" : m.position <= 3 ? "text-emerald-400" : "text-zinc-500"}`}>#{m.position}</span>
+                                <span className="text-zinc-600">{m.matchPoints}pts</span>
+                                <span className="text-zinc-700 text-[10px]">({m.placementPoints}pp + {m.teamKills}k)</span>
                               </div>
-                              <div className="grid grid-cols-2 gap-1">
+                              <div className="flex flex-wrap gap-x-3 gap-y-0.5">
                                 {Object.entries(m.playerKills).map(([pn, k]) => (
-                                  <div key={pn} className="flex items-center justify-between text-[11px] px-2 py-0.5 rounded bg-zinc-900/60">
-                                    <span className="text-zinc-400 truncate mr-2">{pn}</span>
-                                    <span className="text-violet-400/80 font-semibold shrink-0">{k}</span>
-                                  </div>
+                                  <span key={pn} className="text-[10px] text-zinc-400">{pn} <span className="text-violet-400 font-semibold">{k}k</span></span>
                                 ))}
                               </div>
                             </div>
