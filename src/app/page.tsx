@@ -96,6 +96,7 @@ export default function TeamsPage() {
   const [importCode, setImportCode] = useState("");
   const [importLoading, setImportLoading] = useState(false);
   const [selectedMatch, setSelectedMatch] = useState<number | null>(null);
+  const [editingPlayerIdx, setEditingPlayerIdx] = useState<number | null>(null);
 
   // Load local immediately, then silently pull + merge from DB on mount
   useEffect(() => {
@@ -1258,18 +1259,51 @@ export default function TeamsPage() {
               <div className="rounded-2xl overflow-hidden mb-4" style={{ background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.06)" }}>
                 <p className="text-center text-sm font-semibold text-white py-3" style={{ borderBottom:"1px solid rgba(255,255,255,0.06)" }}>Edit Players</p>
                 {(team.players ?? []).map((player, pi) => (
-                  <div key={pi} className="flex items-center gap-3 px-4 py-3" style={{ borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
-                    <div className="h-9 w-9 rounded-xl flex items-center justify-center shrink-0" style={{ background:"rgba(124,58,237,0.15)", border:"1px solid rgba(124,58,237,0.2)" }}>
-                      <UserPlus className="h-4 w-4" style={{ color:"rgba(196,181,253,0.4)" }} />
+                  <div key={pi} className="flex items-center gap-3 px-4 py-2.5" style={{ borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
+                    <div className="h-8 w-8 rounded-xl flex items-center justify-center shrink-0" style={{ background:"rgba(124,58,237,0.15)", border:"1px solid rgba(124,58,237,0.2)" }}>
+                      <UserPlus className="h-3.5 w-3.5" style={{ color:"rgba(196,181,253,0.4)" }} />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-white truncate">{player}</p>
-                      <p className="text-xs" style={{ color:"rgba(196,181,253,0.35)" }}>finishes 00</p>
+                      {editingPlayerIdx === pi ? (
+                        <input
+                          autoFocus
+                          defaultValue={player}
+                          onBlur={(e) => {
+                            const val = e.target.value.trim();
+                            if (!tournament) return;
+                            const newPlayers = [...(team.players ?? [])];
+                            if (val) newPlayers[pi] = val; else newPlayers.splice(pi, 1);
+                            const updated = { ...tournament, teams: tournament.teams.map((t) => t.id === team.id ? { ...t, players: newPlayers } : t) };
+                            save(updated); setEditingTeam((prev) => prev ? { ...prev, players: newPlayers } : prev); setEditingPlayerIdx(null);
+                          }}
+                          onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                          className="w-full bg-transparent text-sm text-white focus:outline-none border-b border-violet-500/40"
+                        />
+                      ) : (
+                        <p className="text-sm font-semibold text-white truncate" onClick={() => setEditingPlayerIdx(pi)} style={{ cursor: "text" }}>{player}</p>
+                      )}
                     </div>
-                    <button className="p-1" style={{ color:"rgba(196,181,253,0.3)" }}><MoreVertical className="h-4 w-4" /></button>
+                    <button
+                      onClick={() => {
+                        if (!tournament) return;
+                        const newPlayers = (team.players ?? []).filter((_, i) => i !== pi);
+                        const updated = { ...tournament, teams: tournament.teams.map((t) => t.id === team.id ? { ...t, players: newPlayers } : t) };
+                        save(updated); setEditingTeam((prev) => prev ? { ...prev, players: newPlayers } : prev); setEditingPlayerIdx(null);
+                      }}
+                      className="p-1 shrink-0"
+                      style={{ color: "rgba(239,68,68,0.5)" }}
+                    ><Minus className="h-3.5 w-3.5" /></button>
                   </div>
                 ))}
-                <button className="w-full py-3 flex items-center justify-center gap-2 text-sm font-medium" style={{ color:"rgba(196,181,253,0.5)" }}>
+                <button
+                  onClick={() => {
+                    if (!tournament) return;
+                    const newPlayers = [...(team.players ?? []), ""];
+                    const updated = { ...tournament, teams: tournament.teams.map((t) => t.id === team.id ? { ...t, players: newPlayers } : t) };
+                    save(updated); setEditingTeam((prev) => prev ? { ...prev, players: newPlayers } : prev);
+                    setEditingPlayerIdx(newPlayers.length - 1);
+                  }}
+                  className="w-full py-3 flex items-center justify-center gap-2 text-sm font-medium" style={{ color:"rgba(196,181,253,0.5)" }}>
                   <Plus className="h-4 w-4" /> Add a player
                 </button>
               </div>
