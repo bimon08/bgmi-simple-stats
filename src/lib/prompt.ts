@@ -2,7 +2,7 @@ import { Team } from "./types";
 
 /**
  * Generate the Gemini OCR prompt.
- * If teams are provided, includes the roster for better matching.
+ * Gemini only extracts raw data (position + kills). Points are calculated by the website.
  */
 export function generatePrompt(teams: Team[]): string {
   const hasTeams = teams.length > 0;
@@ -10,8 +10,15 @@ export function generatePrompt(teams: Team[]): string {
   const rosterSection = hasTeams
     ? `\n═══════════════════════════════════════
 REGISTERED TEAMS (${teams.length} teams)
+Match scoreboard players to these rosters to identify each team.
+Use the registered team name as the "group" value in the output.
 ═══════════════════════════════════════
-${teams.map((t, i) => `${i + 1}. ${t.name}${t.captain ? ` (Captain: ${t.captain})` : ""}`).join("\n")}
+${teams.map((t, i) => {
+  const playerList = (t.players && t.players.length > 0)
+    ? `\n   Players: ${t.players.join(", ")}`
+    : "";
+  return `${i + 1}. ${t.name}${playerList}`;
+}).join("\n")}
 `
     : "";
 
@@ -52,41 +59,15 @@ For each match, read every position block (#1 through #14):
   - All player names EXACTLY as shown (keep all Unicode, symbols, foreign chars)
   - Each player's kills (number before "finishes")
 
-STEP 3 — GROUP TEAMS ACROSS MATCHES
-Players who appear together in the same position block = same team.
-Track the same team across matches by recognizing recurring player names.
-Assign each unique team a group label: A, B, C, D, ...
+STEP 3 — IDENTIFY TEAMS
+Match the players you see on screen to the registered rosters above.
+- Some teams have a full player list — match any of those names
+- Some teams have only 1 name (the leader) — if that one name appears on screen, ALL players in that same position block belong to that team
+- If you cannot match any player in a position block to any registered team → use the next available letter (A, B, C …)
+Track recurring player groups across matches — same players = same team.
 
-STEP 4 — CALCULATE POINTS
-
-Placement Points table:
-  #1 = 10 pts
-  #2 = 6 pts
-  #3 = 5 pts
-  #4 = 4 pts
-  #5 = 3 pts
-  #6 = 2 pts
-  #7 = 1 pt
-  #8 = 1 pt
-  #9 and below = 0 pts
-
-Kill Points: 1 point per kill (sum of all team members' kills)
-
-Match Points = Placement Points + Kill Points
-
-STEP 5 — CALCULATE TOTALS (across all matches)
-  - Total Points = sum of all Match Points
-  - Chicken Dinners = count of matches where position = #1
-  - Total Placement Points = sum of placement points across matches
-  - Total Kills = sum of team kills across matches
-  - Last Match Position = position in the highest-numbered match
-
-STEP 6 — SORT by tiebreaker (rank 1 at top)
-  1st: Total Points (higher = better)
-  2nd: Chicken Dinners (higher = better)
-  3rd: Total Placement Points (higher = better)
-  4th: Total Kills (higher = better)
-  5th: Last Match Position (lower = better)
+**Do NOT calculate any points.** Only output raw positions and kills.
+The website will calculate placement points, kill points, totals, and rankings.
 
 ═══════════════════════════════════════
 OUTPUT FORMAT — Return ONLY this JSON
@@ -96,30 +77,19 @@ OUTPUT FORMAT — Return ONLY this JSON
   "matches_detected": 4,
   "groups": [
     {
-      "rank": 1,
-      "group": "A",
+      "group": "TSMent",
       "players": ["ExactScreenName1", "ExactScreenName2", "ExactScreenName3"],
       "matches": [
         {
           "match": 1,
           "position": 1,
-          "placementPoints": 10,
           "playerKills": {
             "ExactScreenName1": 5,
             "ExactScreenName2": 3,
             "ExactScreenName3": 2
-          },
-          "teamKills": 10,
-          "matchPoints": 20
+          }
         }
-      ],
-      "totals": {
-        "totalPoints": 26,
-        "chickenDinners": 1,
-        "totalPlacementPoints": 13,
-        "totalKills": 13,
-        "lastMatchPosition": 5
-      }
+      ]
     }
   ]
 }
@@ -128,7 +98,7 @@ OUTPUT FORMAT — Return ONLY this JSON
 IMPORTANT RULES
 ═══════════════════════════════════════
 
-- "groups" array MUST be sorted by rank (tiebreaker rules above)
+- Do NOT include placementPoints, matchPoints, teamKills, totals, or rank in the output
 - Player names: EXACTLY as on screen — keep ALL Unicode, symbols, foreign chars
 - "N finishes" = N kills. Double-check — stylized font can be tricky
 - If a team doesn't appear in a match, skip that match entry for them
@@ -136,7 +106,7 @@ IMPORTANT RULES
 - Don't skip any team or player visible in the screenshots
 - After the JSON, confirm:
   Groups found: X | Matches detected: Y
-  Any teams you couldn't track across matches? List them.
+  Any teams you couldn't match to the roster? List them.
 
 ═══════════════════════════════════════
 I'll upload images now. When I say "ok", analyze using the rules above.`;

@@ -27,10 +27,25 @@ export function saveTournaments(tournaments: Tournament[]): void {
 }
 
 export function upsertTournament(t: Tournament, all: Tournament[]): Tournament[] {
+  const stamped = { ...t, updatedAt: new Date().toISOString() };
   const idx = all.findIndex(x => x.id === t.id);
-  const updated = idx >= 0 ? all.map(x => x.id === t.id ? t : x) : [...all, t];
+  const updated = idx >= 0 ? all.map(x => x.id === t.id ? stamped : x) : [...all, stamped];
   saveTournaments(updated);
   return updated;
+}
+
+/** Merge remote tournaments into local ones. Newer updatedAt wins per id. */
+export function mergeTournaments(local: Tournament[], remote: Tournament[]): Tournament[] {
+  const map = new Map<string, Tournament>();
+  for (const t of local) map.set(t.id, t);
+  for (const t of remote) {
+    const existing = map.get(t.id);
+    if (!existing) { map.set(t.id, t); continue; }
+    const localTs = existing.updatedAt ?? existing.createdAt;
+    const remoteTs = t.updatedAt ?? t.createdAt;
+    if (remoteTs > localTs) map.set(t.id, t);
+  }
+  return Array.from(map.values());
 }
 
 export function createTournament(name: string): Tournament {

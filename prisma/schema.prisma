@@ -19,6 +19,7 @@ model User {
   rules     String[] @default([])
   createdAt DateTime @default(now()) @map("created_at")
   wallets   Wallet[]
+  savedTournaments SavedTournament[]
 
   @@map("users")
 }
@@ -46,4 +47,14 @@ model Transaction {
   wallet    Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
 
   @@map("transactions")
+}
+
+model SavedTournament {
+  id        String   @id
+  userId    String   @map("user_id")
+  data      Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("saved_tournaments")
 }

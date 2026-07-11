@@ -6,6 +6,7 @@ export interface Team {
   notes?: string;
   slot?: number;
   players?: string[];
+  paid?: boolean;
 }
 
 export interface PlayerKills {
@@ -83,6 +84,7 @@ export interface Tournament {
   id: string;
   name: string;
   createdAt: string;
+  updatedAt?: string;          // set on every save; used for sync conflict resolution
   teams: Team[];
   rules?: string[];
   geminiData?: GeminiOutput;

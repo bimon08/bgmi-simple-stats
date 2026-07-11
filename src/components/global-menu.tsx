@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Menu, X, BookOpen, ChevronRight, Home, Trophy } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 
@@ -7,6 +7,11 @@ export function GlobalMenu() {
   const path = usePathname();
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => { setMounted(true); }, []);
+
+  if (!mounted) return null;
 
   const hidden = path.startsWith("/pay/") || path.startsWith("/login");
   const close = () => setOpen(false);

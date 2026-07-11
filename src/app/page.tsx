@@ -6,6 +6,8 @@ import {
   Clipboard, ClipboardPaste, ChevronDown, ChevronUp, Target,
   Users, MoreHorizontal, FileDown, Database, Table2, Flame,
   ImageIcon, Pencil, UserPlus, ListX, Pen, Star, HelpCircle,
+  Flag, ArrowRight, Save, Search, Tag, BarChart2, Hash,
+  ListOrdered, TrendingUp, MoreVertical,
 } from "lucide-react";
 import { toJpeg } from "html-to-image";
 import { toast } from "sonner";
@@ -14,7 +16,7 @@ import SYNCED_PLAYERS from "@/data/players.json";
 
 import {
   loadTournaments, saveTournaments, createTournament,
-  upsertTournament, deleteTournamentById,
+  upsertTournament, deleteTournamentById, mergeTournaments,
 } from "@/lib/storage";
 import { compareTiebreaker } from "@/lib/points";
 import { generatePrompt } from "@/lib/prompt";
@@ -46,10 +48,19 @@ export default function TeamsPage() {
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [createName, setCreateName] = useState("");
+  const [roundRobin, setRoundRobin] = useState(false);
   const [showMore, setShowMore] = useState(false);
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
   const toggleCard = (id: string) => setExpandedCards((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const [showAdd, setShowAdd] = useState(false);
+  const [showAddScreen, setShowAddScreen] = useState(false);
+  const [addScreenTab, setAddScreenTab] = useState<"add" | "entered">("add");
+  const [addScreenMode, setAddScreenMode] = useState<"create" | "edit">("create");
+  const [addForm, setAddForm] = useState({ name: "", slot: "", tags: "" });
+  const [playerInputs, setPlayerInputs] = useState<string[]>([""]);  
+  const [editingTeam, setEditingTeam] = useState<Team | null>(null);
+  const [editTeamForm, setEditTeamForm] = useState({ name: "", slot: "", tags: "", players: "" });
+  const [initialTeamCount, setInitialTeamCount] = useState(0);
   const [showSlots, setShowSlots] = useState(false);
   const [showStandings, setShowStandings] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
@@ -62,7 +73,8 @@ export default function TeamsPage() {
   const [showStats, setShowStats] = useState(false);
   const [inputs, setInputs] = useState<{ name: string; phone: string; players: string; showPhone: boolean }[]>([{ name: "", phone: "", players: "", showPhone: false }]);
   const [syncedPlayers, setSyncedPlayers] = useState<{ playerName: string; phone: string | null }[]>([]);
-  const [syncLoading, setSyncLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [lastSynced, setLastSynced] = useState<string | null>(null);
   const [showSyncPicker, setShowSyncPicker] = useState(false);
   const [syncPickerTarget, setSyncPickerTarget] = useState<number>(0); // which row we're picking for
   const [startSlot, setStartSlot] = useState(3);
@@ -78,6 +90,21 @@ export default function TeamsPage() {
   const [showGuide, setShowGuide] = useState(false);
 
   useEffect(() => { setTournaments(loadTournaments()); }, []);
+
+  // Native back-button support: push a history entry for each full-screen, pop to close
+  useEffect(() => {
+    const anyOpen = showCreate || showAddScreen;
+    if (anyOpen) {
+      history.pushState({ overlay: true }, '');
+    }
+    const onPop = () => {
+      if (showAddScreen) { setShowAddScreen(false); return; }
+      if (showCreate) { setShowCreate(false); setCreateName(''); setRoundRobin(false); return; }
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showCreate, showAddScreen]);
 
   const computeStandings = (t: Tournament) => {
     if (!t.geminiData || !t.assignments) { setStandings([]); return; }
@@ -116,10 +143,119 @@ export default function TeamsPage() {
     if (!createName.trim()) return;
     const t = createTournament(createName.trim());
     setTournaments((prev) => { const u = [...prev, t]; saveTournaments(u); return u; });
-    setCreateName(""); setShowCreate(false); toast.success("Tournament created!");
+    setTournament(t);
+    setCreateName(""); setRoundRobin(false); setShowCreate(false);
+    setAddForm({ name: "", slot: String(t.teams.length + 1), tags: "" });
+    setAddScreenTab("add"); setAddScreenMode("create"); setShowAddScreen(true);
+  };
+
+  const handleCloneCreate = (source: Tournament) => {
+    const t: Tournament = {
+      ...createTournament(source.name + " (Copy)"),
+      teams: source.teams.map((tm) => ({ ...tm, id: crypto.randomUUID() })),
+      pointSystem: source.pointSystem,
+    };
+    setTournaments((prev) => { const u = [...prev, t]; saveTournaments(u); return u; });
+    setTournament(t);
+    setShowCreate(false);
+    setAddForm({ name: "", slot: String(t.teams.length + 1), tags: "" });
+    setAddScreenTab("add"); setAddScreenMode("create"); setShowAddScreen(true);
+    toast.success(`Cloned "${source.name}" — add more teams below`);
+  };
+
+  const handleAddTeamToScreen = () => {
+    if (!tournament || !addForm.name.trim()) return;
+    const players = playerInputs.map((p) => p.trim()).filter(Boolean);
+    const newTeam: Team = {
+      id: crypto.randomUUID(),
+      name: addForm.name.trim(),
+      slot: addForm.slot ? Number(addForm.slot) : undefined,
+      players: players.length > 0 ? players : undefined,
+      paid: true,
+    };
+    const updated = { ...tournament, teams: [...tournament.teams, newTeam] };
+    save(updated);
+    setAddForm({ name: "", slot: String(updated.teams.length + 1), tags: "" });
+    setPlayerInputs([""]);
+    toast.success(`"${newTeam.name}" added!`);
+  };
+
+  const parseTeamPaste = (text: string): { teamName: string; players: string[] } | null => {
+    const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (lines.length < 2) return null; // single line — normal paste
+    let teamName = '';
+    const players: string[] = [];
+    for (const line of lines) {
+      // "Team TSMent" or "team eklnp"
+      const teamMatch = line.match(/^[Tt]eam\s+(.+)$/);
+      if (teamMatch) { teamName = teamMatch[1].trim(); continue; }
+      // "Players 1 Name" or "1 Name" or "1Name" (numbered format)
+      const numberedMatch = line.match(/^(?:[Pp]layers?\s+)?(\d+)\s*(.+)$/);
+      if (numberedMatch) { players.push(numberedMatch[2].trim()); continue; }
+      // Plain line — just a player name with no number prefix
+      players.push(line);
+    }
+    if (!teamName && !players.length) return null;
+    return { teamName, players };
+  };
+
+  const handleTeamNamePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const text = e.clipboardData.getData('text');
+    const parsed = parseTeamPaste(text);
+    if (!parsed) return; // let normal paste happen
+    e.preventDefault();
+    if (parsed.teamName) setAddForm((f) => ({ ...f, name: parsed.teamName }));
+    if (parsed.players.length > 0) setPlayerInputs(parsed.players);
+    toast.success('Team pasted! Check the fields and tap Add Team.');
+  };
+
+  const handleModalTeamPaste = (e: React.ClipboardEvent<HTMLInputElement>, rowIndex: number) => {
+    const text = e.clipboardData.getData('text');
+    const parsed = parseTeamPaste(text);
+    if (!parsed) return;
+    e.preventDefault();
+    const u = [...inputs];
+    if (parsed.teamName) u[rowIndex] = { ...u[rowIndex], name: parsed.teamName };
+    if (parsed.players.length > 0) u[rowIndex] = { ...u[rowIndex], players: parsed.players.join(', ') };
+    setInputs(u);
+    toast.success('Team pasted!');
+  };
+
+  const saveEditTeam = () => {
+    if (!tournament || !editingTeam) return;
+    const updated = tournament.teams.map((t) =>
+      t.id === editingTeam.id
+        ? { ...t, name: editTeamForm.name.trim() || t.name, tags: editTeamForm.tags || undefined,
+            players: editTeamForm.players.trim() ? editTeamForm.players.split(/[,\n]+/).map((p) => p.trim()).filter(Boolean) : t.players }
+        : t
+    );
+    save({ ...tournament, teams: updated });
+    setEditingTeam(null);
+    toast.success('Team updated!');
   };
 
   const handleDeleteTournament = (id: string) => { setTournaments((prev) => deleteTournamentById(id, prev)); toast.success("Deleted"); };
+
+  const handleSync = async () => {
+    setSyncing(true);
+    try {
+      const local = loadTournaments();
+      const pushRes = await fetch("/api/tournaments", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tournaments: local }) });
+      if (!pushRes.ok) throw new Error(pushRes.status === 401 ? "Please sign in to sync" : "Sync failed");
+      const pullRes = await fetch("/api/tournaments");
+      if (!pullRes.ok) throw new Error("Sync failed");
+      const { tournaments: remote } = await pullRes.json();
+      const merged = mergeTournaments(local, remote);
+      saveTournaments(merged);
+      setTournaments(merged);
+      setLastSynced(new Date().toLocaleTimeString());
+      toast.success(`Synced — ${merged.length} tournament${merged.length !== 1 ? "s" : ""}`);
+    } catch (e: unknown) {
+      toast.error((e as Error).message || "Sync failed");
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const handleDelete = (id: string) => { if (!tournament) return; save({ ...tournament, teams: tournament.teams.filter((t) => t.id !== id) }); toast.success("Removed"); };
   const addRow = () => setInputs([...inputs.map((r) => ({ ...r, showPhone: false })), { name: "", phone: "", players: "", showPhone: false }]);
@@ -143,6 +279,7 @@ export default function TeamsPage() {
       players: r.players.trim()
         ? r.players.split(/[,\n]+/).map(p => p.trim()).filter(Boolean)
         : undefined,
+      paid: true,
     }));
     save({ ...tournament, teams: [...tournament.teams, ...newTeams] });
     setInputs([{ name: "", phone: "", players: "", showPhone: false }]); setShowAdd(false);
@@ -203,7 +340,7 @@ export default function TeamsPage() {
       const temp = document.createElement("div"); temp.style.cssText = "position:absolute;left:-9999px;top:0;"; temp.appendChild(clone); document.body.appendChild(temp);
       await new Promise((r) => setTimeout(r, 300));
       const h = clone.scrollHeight || clone.offsetHeight;
-      const dataUrl = await toJpeg(clone, { width: 700, height: h, pixelRatio: 3, quality: 0.92 });
+      const dataUrl = await toJpeg(clone, { width: 700, height: h, pixelRatio: 3, quality: 0.92, skipFonts: true });
       document.body.removeChild(temp);
       if (download) { const a = document.createElement("a"); a.download = `${filename}.jpg`; a.href = dataUrl; a.click(); toast.success("Downloaded!"); return; }
       const res = await fetch(dataUrl); const blob = await res.blob();
@@ -216,7 +353,7 @@ export default function TeamsPage() {
   }, []);
 
   // Hide bottom nav when any sheet/modal is open
-  const anyModalOpen = showCreate || showAdd || showEdit || showStats || showStandings || showSlots || showPointSystem;
+  const anyModalOpen = showCreate || showAdd || showAddScreen || showEdit || showStats || showStandings || showSlots || showPointSystem;
   useEffect(() => {
     document.body.dataset.modal = anyModalOpen ? "open" : "";
     return () => { document.body.dataset.modal = ""; };
@@ -345,6 +482,9 @@ export default function TeamsPage() {
             ))}
           </div>
         )}
+        <button onClick={handleSync} disabled={syncing} title={lastSynced ? `Last synced ${lastSynced}` : "Sync tournaments"} className="h-12 w-12 rounded-2xl flex items-center justify-center shadow-lg press-scale disabled:opacity-50" style={{ background: "#2a1f42", color: syncing ? "#a78bfa" : "#c4b5fd" }}>
+          {syncing ? <div className="h-4 w-4 rounded-full border-2 border-violet-400 border-t-transparent animate-spin" /> : <Download className="h-5 w-5 rotate-180" />}
+        </button>
         <button onClick={() => setShowMore(!showMore)} className="h-12 w-12 rounded-2xl flex items-center justify-center shadow-lg press-scale" style={{ background: "#2a1f42", color: "#c4b5fd" }}>
           <MoreHorizontal className="h-5 w-5" />
         </button>
@@ -353,36 +493,455 @@ export default function TeamsPage() {
         </button>
       </div>
 
-      {/* CREATE MODAL */}
+      {/* CREATE SCREEN — full-screen overlay */}
       {showCreate && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center anim-fade-in" style={{ background: "rgba(0,0,0,0.75)" }} onClick={() => setShowCreate(false)}>
-          <div className="w-full max-w-sm rounded-t-3xl sm:rounded-3xl p-6 pb-10 sm:pb-6 shadow-2xl anim-sheet-up" style={{ background: "#1a1230", border: "1px solid rgba(124,58,237,0.3)" }} onClick={(e) => e.stopPropagation()}>
-            <div className="w-10 h-1 rounded-full mx-auto mb-5" style={{ background: "rgba(124,58,237,0.35)" }} />
-            <h2 className="text-base font-bold text-white mb-1">New Tournament</h2>
-            <p className="text-xs mb-4" style={{ color: "rgba(167,139,250,0.5)" }}>Give your tournament a name</p>
-            <input autoFocus value={createName} onChange={(e) => setCreateName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") handleCreate(); if (e.key === "Escape") setShowCreate(false); }} placeholder="Tournament name..." className="w-full px-4 py-3 rounded-xl text-sm text-white placeholder-purple-300/30 focus:outline-none" style={{ background: "rgba(124,58,237,0.1)", border: "1px solid rgba(124,58,237,0.3)", caretColor: "#a78bfa", transition: "border-color 200ms" }} />
-            <div className="flex gap-2 mt-4">
-              <button onClick={() => setShowCreate(false)} className="flex-1 py-2.5 rounded-xl text-sm font-semibold press-scale" style={{ background: "rgba(255,255,255,0.05)", color: "rgba(196,181,253,0.55)" }}>Cancel</button>
-              <button onClick={handleCreate} disabled={!createName.trim()} className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-40 press-scale" style={{ background: "linear-gradient(135deg,#7c3aed,#9333ea)" }}>Create</button>
+        <div className="fixed inset-0 z-50 flex flex-col anim-fade-in" style={{ background: "#0a0614" }}>
+          {/* Close button */}
+          <button
+            onClick={() => { setShowCreate(false); setCreateName(""); setRoundRobin(false); }}
+            className="absolute top-5 right-5 p-2 rounded-full press-scale"
+            style={{ background: "rgba(255,255,255,0.07)", color: "rgba(196,181,253,0.7)" }}
+          >
+            <X className="h-5 w-5" />
+          </button>
+
+          <div className="flex flex-col flex-1 overflow-y-auto px-6 pt-16 pb-10">
+            {/* Title */}
+            <h1
+              className="text-3xl mb-8 text-white"
+              style={{ fontFamily: "'Dancing Script', cursive", fontWeight: 700, letterSpacing: "0.01em" }}
+            >
+              Create a tournament
+            </h1>
+
+            {/* Name input */}
+            <div
+              className="flex items-center gap-3 px-4 py-3.5 rounded-2xl mb-5"
+              style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}
+            >
+              <Flag className="h-4 w-4 shrink-0" style={{ color: "rgba(196,181,253,0.55)" }} />
+              <input
+                autoFocus
+                value={createName}
+                onChange={(e) => setCreateName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && createName.trim()) handleCreate(); }}
+                placeholder="Enter Tourney Name"
+                className="flex-1 bg-transparent text-white text-sm focus:outline-none"
+                style={{ caretColor: "#a78bfa" }}
+              />
             </div>
+
+            {/* Round Robin toggle + GO */}
+            <div className="flex items-center gap-3 mb-8">
+              {/* Toggle */}
+              <button
+                onClick={() => setRoundRobin((v) => !v)}
+                className="relative shrink-0 press-scale"
+                style={{ width: 48, height: 28 }}
+              >
+                <div
+                  className="absolute inset-0 rounded-full transition-colors duration-200"
+                  style={{ background: roundRobin ? "rgba(124,58,237,0.9)" : "rgba(255,255,255,0.15)" }}
+                />
+                <div
+                  className="absolute top-1 left-1 transition-transform duration-200 h-5 w-5 rounded-full bg-white shadow"
+                  style={{ transform: roundRobin ? "translateX(20px)" : "translateX(0)" }}
+                />
+              </button>
+              <span className="text-sm font-medium" style={{ color: roundRobin ? "#c4b5fd" : "rgba(196,181,253,0.5)" }}>
+                Round Robin
+              </span>
+              <button
+                onClick={handleCreate}
+                disabled={!createName.trim()}
+                className="ml-auto flex items-center gap-2 px-6 py-2.5 rounded-full text-sm font-bold text-white disabled:opacity-30 press-scale"
+                style={{ background: "linear-gradient(135deg,#7c3aed,#a855f7)" }}
+              >
+                GO <ArrowRight className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* OR divider */}
+            {tournaments.length > 0 && (
+              <>
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="flex-1 border-t" style={{ borderColor: "rgba(255,255,255,0.12)", borderStyle: "dashed" }} />
+                  <span className="text-xs font-semibold tracking-widest" style={{ color: "rgba(196,181,253,0.45)" }}>OR</span>
+                  <div className="flex-1 border-t" style={{ borderColor: "rgba(255,255,255,0.12)", borderStyle: "dashed" }} />
+                </div>
+                <p className="text-xs text-center italic mb-4" style={{ color: "rgba(196,181,253,0.4)" }}>Create from existing tourney</p>
+
+                {/* Existing tournaments list */}
+                <div className="space-y-2">
+                  {tournaments.map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => handleCloneCreate(t)}
+                      className="w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl text-left press-scale transition-colors"
+                      style={{ background: "rgba(124,58,237,0.08)", border: "1px solid rgba(124,58,237,0.15)" }}
+                    >
+                      <div
+                        className="h-11 w-11 rounded-xl shrink-0 flex items-center justify-center"
+                        style={{ background: "rgba(124,58,237,0.2)", border: "1px solid rgba(124,58,237,0.3)" }}
+                      >
+                        <Trophy className="h-5 w-5" style={{ color: "#a78bfa" }} />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-white leading-tight">{t.name}</p>
+                        <p className="text-xs mt-0.5" style={{ color: "rgba(196,181,253,0.5)" }}>
+                          Total teams: {String(t.teams.length).padStart(2, "0")}
+                        </p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
+      {/* ADD TEAMS SCREEN — full page after create/clone */}
+      {showAddScreen && tournament && (() => {
+        const teams = tournament.teams;
+        const initials = (name: string) => name.slice(0, 1).toUpperCase();
+        const avatarColors = ["#7c3aed","#9333ea","#6d28d9","#8b5cf6","#a855f7"];
+        return (
+          <div className="fixed inset-0 z-[55] flex flex-col anim-fade-in" style={{ background: "#0d0820" }}>
+            {/* Title + optional close */}
+            <div className="px-6 pt-12 pb-3 shrink-0 relative text-center">
+              {addScreenMode === "edit" && (
+                <button onClick={() => setShowAddScreen(false)} className="absolute right-4 top-12 p-2 rounded-xl" style={{ background:"rgba(255,255,255,0.07)", color:"rgba(196,181,253,0.6)" }}>
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+              <h1 className="text-2xl text-white" style={{ fontFamily:"'Dancing Script',cursive", fontWeight:700 }}>
+                {tournament.name}
+              </h1>
+            </div>
+
+            {/* Tabs */}
+            <div className="mx-6 mb-4 shrink-0 flex rounded-2xl overflow-hidden" style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(124,58,237,0.2)" }}>
+              {(["add","entered"] as const).map((tab) => (
+                <button key={tab} onClick={() => setAddScreenTab(tab)}
+                  className="flex-1 py-3 text-sm font-semibold capitalize flex items-center justify-center gap-2 transition-colors"
+                  style={{ color: addScreenTab === tab ? "#c4b5fd" : "rgba(196,181,253,0.4)",
+                    borderBottom: addScreenTab === tab ? "2px solid #8b5cf6" : "2px solid transparent" }}>
+                  {tab === "entered" ? "Entered" : "Add"}
+                  {tab === "entered" && teams.length > 0 && (
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ background:"#7c3aed", color:"#fff" }}>{teams.length}</span>
+                  )}
+                </button>
+              ))}
+            </div>
+
+            {/* Scrollable content */}
+            <div className="flex-1 overflow-y-auto px-6 pb-40">
+              {addScreenTab === "add" ? (
+                <>
+                  {/* Logo + Tags — 50/50, same height */}
+                  <div className="grid grid-cols-2 gap-3 mb-5">
+                    {/* Logo */}
+                    <div className="h-16 rounded-2xl flex flex-col items-center justify-center gap-1 overflow-hidden" style={{ background:"rgba(124,58,237,0.12)", border:"2px dashed rgba(124,58,237,0.35)" }}>
+                      <ImageIcon className="h-3.5 w-3.5" style={{ color:"#8b5cf6" }} />
+                      <p className="text-[8px] font-semibold text-white text-center leading-tight px-1">Upload Team Logo</p>
+                      <p className="text-[7px] text-center px-1" style={{ color:"rgba(196,181,253,0.35)" }}>Optional</p>
+                    </div>
+                    {/* Tags */}
+                    <div className="h-16 rounded-2xl px-3 flex flex-col justify-center" style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.08)" }}>
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-[10px] font-bold tracking-widest" style={{ color:"rgba(139,92,246,0.7)" }}>TAGS</p>
+                        <div className="relative group">
+                          <HelpCircle className="h-3.5 w-3.5 cursor-help" style={{ color:"rgba(196,181,253,0.3)" }} />
+                          <div className="absolute right-0 bottom-5 w-48 text-[10px] leading-relaxed px-2.5 py-2 rounded-xl pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                            style={{ background:"#1e1535", color:"rgba(196,181,253,0.8)", border:"1px solid rgba(124,58,237,0.25)" }}>
+                            Tags are searchable aliases — used in addition to the team name to search for a team.
+                          </div>
+                        </div>
+                      </div>
+                      <input
+                        value={addForm.tags}
+                        onChange={(e) => setAddForm((f) => ({ ...f, tags: e.target.value }))}
+                        placeholder="e.g. alpha, squad-1"
+                        className="w-full bg-transparent text-white text-xs focus:outline-none"
+                        style={{ caretColor:"#a78bfa" }}
+                      />
+                    </div>
+                  </div>
+                  <div className="rounded-2xl px-4 py-3.5 mb-3" style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.08)" }}>
+                    <p className="text-[10px] font-bold tracking-widest mb-1.5" style={{ color:"rgba(139,92,246,0.7)" }}>TEAM NAME</p>
+                    <div className="flex items-center gap-3">
+                      <UserPlus className="h-4 w-4 shrink-0" style={{ color:"rgba(196,181,253,0.4)" }} />
+                      <input
+                        value={addForm.name}
+                        onChange={(e) => setAddForm((f) => ({ ...f, name: e.target.value }))}
+                        onKeyDown={(e) => { if (e.key === "Enter" && addForm.name.trim()) handleAddTeamToScreen(); }}
+                        onPaste={handleTeamNamePaste}
+                        placeholder="Enter team name"
+                        className="flex-1 bg-transparent text-white text-sm focus:outline-none"
+                        style={{ caretColor:"#a78bfa" }}
+                      />
+                    </div>
+                    <p className="text-[9px] mt-2" style={{ color:"rgba(196,181,253,0.25)" }}>💡 Paste a full team block to auto-fill name &amp; players</p>
+                  </div>
+
+
+
+                  {/* Players */}
+                  <div className="rounded-2xl px-4 py-3.5 mb-5" style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.08)" }}>
+                    <p className="text-[10px] font-bold tracking-widest mb-2" style={{ color:"rgba(139,92,246,0.7)" }}>PLAYERS</p>
+                    <div className="space-y-2">
+                      {playerInputs.map((val, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                          <input
+                            value={val}
+                            onChange={(e) => { const u = [...playerInputs]; u[i] = e.target.value; setPlayerInputs(u); }}
+                            placeholder={`Player ${i + 1}`}
+                            className="flex-1 bg-transparent text-white text-sm focus:outline-none border-b"
+                            style={{ caretColor:"#a78bfa", borderColor:"rgba(124,58,237,0.2)" }}
+                          />
+                          {playerInputs.length > 1 && (
+                            <button onClick={() => setPlayerInputs(playerInputs.filter((_, idx) => idx !== i))} className="shrink-0 p-0.5" style={{ color:"rgba(196,181,253,0.35)" }}>
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      onClick={() => setPlayerInputs([...playerInputs, ""])}
+                      className="mt-3 flex items-center gap-1.5 text-xs font-semibold press-scale"
+                      style={{ color:"rgba(139,92,246,0.8)" }}
+                    >
+                      <Plus className="h-3.5 w-3.5" /> Add player
+                    </button>
+                  </div>
+
+                  {/* Add Team button */}
+                  <button
+                    onClick={handleAddTeamToScreen}
+                    disabled={!addForm.name.trim()}
+                    className="w-full py-4 rounded-2xl font-bold text-white text-sm flex items-center justify-center gap-2 press-scale disabled:opacity-40"
+                    style={{ background:"linear-gradient(135deg,#6d28d9,#9333ea)", boxShadow:"0 4px 24px rgba(109,40,217,0.4)" }}
+                  >
+                    <Users className="h-4 w-4" />+ Add Team
+                  </button>
+                </>
+              ) : (
+                /* Entered tab */
+                <div className="space-y-2">
+                  {teams.length === 0 ? (
+                    <p className="text-center text-sm mt-10" style={{ color:"rgba(196,181,253,0.35)" }}>No teams added yet</p>
+                  ) : teams.map((team, idx) => (
+                    <button key={team.id} onClick={() => { setEditingTeam(team); setEditTeamForm({ name: team.name, slot: String(team.slot ?? ""), tags: "", players: (team.players ?? []).join(", ") }); }} className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-left press-scale" style={{ background:"rgba(124,58,237,0.08)", border:"1px solid rgba(124,58,237,0.15)" }}>
+                      <div className="h-9 w-9 rounded-xl flex items-center justify-center shrink-0 text-white text-xs font-bold" style={{ background: avatarColors[idx % avatarColors.length] }}>
+                        {initials(team.name)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-white truncate">{team.name}</p>
+                        {team.players && team.players.length > 0 && (
+                          <p className="text-xs truncate" style={{ color:"rgba(196,181,253,0.45)" }}>{team.players.join(", ")}</p>
+                        )}
+                      </div>
+                      {team.slot && <span className="text-xs font-bold shrink-0" style={{ color:"rgba(139,92,246,0.7)" }}>#{team.slot}</span>}
+                      {/* Paid toggle */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (!tournament) return;
+                          const updated = { ...tournament, teams: tournament.teams.map((t) => t.id === team.id ? { ...t, paid: !t.paid } : t) };
+                          save(updated);
+                        }}
+                        className="shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold press-scale"
+                        style={team.paid !== false
+                          ? { background: "rgba(34,197,94,0.15)", color: "#4ade80", border: "1px solid rgba(34,197,94,0.3)" }
+                          : { background: "rgba(239,68,68,0.12)", color: "#f87171", border: "1px solid rgba(239,68,68,0.25)" }}
+                      >
+                        {team.paid !== false ? "✓ PAID" : "✗ UNPD"}
+                      </button>
+                      <ChevronDown className="h-3.5 w-3.5 -rotate-90 shrink-0" style={{ color:"rgba(196,181,253,0.3)" }} />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Sticky bottom — team counter + CREATE/UPDATE TOURNEY */}
+            <div className="absolute bottom-0 left-0 right-0 px-6 pb-8 pt-4 shrink-0" style={{ background:"linear-gradient(to top,#0d0820 70%,transparent)" }}>
+              {addScreenMode === "create" && teams.length > 0 && (
+                <div className="flex items-center gap-2 mb-3 justify-center">
+                  {teams.slice(0, 3).map((t, i) => (
+                    <div key={t.id} className="h-8 w-8 rounded-full border-2 border-[#0d0820] flex items-center justify-center text-[10px] font-bold text-white" style={{ background: avatarColors[i % avatarColors.length], marginLeft: i > 0 ? -10 : 0, zIndex: 3 - i }}>
+                      {initials(t.name)}
+                    </div>
+                  ))}
+                  {teams.length > 3 && (
+                    <div className="h-8 w-8 rounded-full border-2 border-[#0d0820] flex items-center justify-center text-[10px] font-bold text-white" style={{ background:"#6d28d9", marginLeft:-10 }}>
+                      +{teams.length - 3}
+                    </div>
+                  )}
+                  <span className="text-sm ml-2" style={{ color:"rgba(196,181,253,0.6)" }}>{teams.length} team{teams.length !== 1 ? "s" : ""} added</span>
+                </div>
+              )}
+              {addScreenMode === "create" && (
+                <p className="text-xs text-center mb-3" style={{ color:"rgba(196,181,253,0.35)" }}>Click here to create a tournament with all your teams</p>
+              )}
+              <button
+                onClick={() => { setShowAddScreen(false); toast.success(`Tournament "${tournament.name}" ${addScreenMode === "edit" ? "updated" : "ready"}!`); }}
+                disabled={addScreenMode === "edit" && teams.length === initialTeamCount}
+                className="w-full py-4 rounded-2xl font-bold text-white text-sm flex items-center justify-center gap-2 press-scale disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{ background:"linear-gradient(135deg,#7c3aed,#a855f7)", boxShadow:"0 4px 28px rgba(124,58,237,0.5)" }}
+              >
+                <Trophy className="h-4 w-4" /> {addScreenMode === "edit" ? "UPDATE TOURNEY" : "CREATE TOURNEY"}
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* TEAM EDIT SCREEN */}
+      {editingTeam && tournament && (() => {
+        const team = editingTeam;
+        const standing = tournament.geminiData?.groups.find((g) => {
+          const assignedId = tournament.assignments?.[g.group];
+          return assignedId === team.id;
+        });
+        const pp = standing?.totals.totalPlacementPoints ?? 0;
+        const kp = standing?.totals.totalKills ?? 0;
+        const tp = standing?.totals.totalPoints ?? 0;
+        const wins = standing?.totals.chickenDinners ?? 0;
+        const matchCount = standing?.matches.length ?? 0;
+        const statPill = (icon: React.ReactNode, label: string, val: number | string) => (
+          <div className="flex-1 min-w-0 flex items-center gap-2 px-3 py-2.5 rounded-2xl" style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.07)" }}>
+            <div className="h-7 w-7 rounded-full flex items-center justify-center shrink-0" style={{ background:"rgba(124,58,237,0.25)" }}>{icon}</div>
+            <div><p className="text-[9px] font-bold tracking-widest" style={{ color:"rgba(139,92,246,0.7)" }}>{label}</p><p className="text-sm font-bold text-white">{val}</p></div>
+          </div>
+        );
+        return (
+          <div className="fixed inset-0 z-[60] flex flex-col anim-fade-in" style={{ background:"#0d0820" }}>
+            {/* Top bar */}
+            <div className="flex items-center justify-between px-5 pt-12 pb-4 shrink-0">
+              <button onClick={() => setEditingTeam(null)} className="p-2 rounded-xl press-scale" style={{ background:"rgba(255,255,255,0.06)" }}>
+                <ChevronDown className="h-5 w-5 text-white rotate-90" />
+              </button>
+              <div className="flex items-center gap-2">
+                <button onClick={saveEditTeam} className="flex items-center gap-2 px-5 py-2 rounded-full font-semibold text-sm press-scale" style={{ background:"rgba(139,92,246,0.25)", border:"1px solid rgba(139,92,246,0.4)", color:"#c4b5fd" }}>
+                  <Save className="h-4 w-4" /> Save
+                </button>
+                <button onClick={() => { if (!tournament) return; save({ ...tournament, teams: tournament.teams.filter((t) => t.id !== team.id) }); setEditingTeam(null); toast.success('Team removed'); }} className="p-2 rounded-xl press-scale" style={{ background:"rgba(239,68,68,0.1)", color:"rgba(239,68,68,0.7)" }}>
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+            {/* Scrollable body */}
+            <div className="flex-1 overflow-y-auto px-5 pb-32">
+              {/* Update logo */}
+              <div className="flex flex-col items-center gap-1 mb-6">
+                <div className="h-16 w-16 rounded-2xl flex items-center justify-center" style={{ background:"rgba(124,58,237,0.12)", border:"2px dashed rgba(124,58,237,0.35)" }}>
+                  <Search className="h-6 w-6" style={{ color:"#8b5cf6" }} />
+                </div>
+                <p className="text-xs" style={{ color:"rgba(196,181,253,0.5)" }}>Update logo</p>
+              </div>
+              {/* Change name */}
+              <div className="flex items-center gap-4 mb-3">
+                <p className="text-sm font-medium w-28 shrink-0" style={{ color:"rgba(196,181,253,0.6)" }}>Change name</p>
+                <div className="flex-1 flex items-center gap-2 px-4 py-3 rounded-2xl" style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.08)" }}>
+                  <Pencil className="h-4 w-4 shrink-0" style={{ color:"rgba(196,181,253,0.4)" }} />
+                  <input value={editTeamForm.name} onChange={(e) => setEditTeamForm((f) => ({ ...f, name: e.target.value }))} className="flex-1 bg-transparent text-white text-sm focus:outline-none" style={{ caretColor:"#a78bfa" }} />
+                </div>
+              </div>
+              {/* Tags */}
+              <div className="flex items-center gap-4 mb-4">
+                <p className="text-sm font-medium w-28 shrink-0" style={{ color:"rgba(196,181,253,0.6)" }}>Tags</p>
+                <div className="flex-1 flex items-center gap-2 px-4 py-3 rounded-2xl" style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.08)" }}>
+                  <Tag className="h-4 w-4 shrink-0" style={{ color:"rgba(196,181,253,0.4)" }} />
+                  <input value={editTeamForm.tags} onChange={(e) => setEditTeamForm((f) => ({ ...f, tags: e.target.value }))} placeholder="Tags" className="flex-1 bg-transparent text-white text-sm focus:outline-none" style={{ caretColor:"#a78bfa" }} />
+                </div>
+              </div>
+              {/* Paid toggle */}
+              <div className="flex items-center gap-4 mb-5">
+                <p className="text-sm font-medium w-28 shrink-0" style={{ color:"rgba(196,181,253,0.6)" }}>Payment</p>
+                <button
+                  onClick={() => {
+                    if (!tournament) return;
+                    const updated = { ...tournament, teams: tournament.teams.map((t) => t.id === editingTeam!.id ? { ...t, paid: !(editingTeam?.paid ?? true) } : t) };
+                    save(updated);
+                    setEditingTeam((prev) => prev ? { ...prev, paid: !(prev.paid ?? true) } : prev);
+                  }}
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-2xl font-semibold text-sm press-scale"
+                  style={editingTeam?.paid !== false
+                    ? { background: "rgba(34,197,94,0.15)", color: "#4ade80", border: "1px solid rgba(34,197,94,0.3)" }
+                    : { background: "rgba(239,68,68,0.1)", color: "#f87171", border: "1px solid rgba(239,68,68,0.25)" }}
+                >
+                  {editingTeam?.paid !== false ? "✓ Paid" : "✗ Unpaid"} — tap to toggle
+                </button>
+              </div>
+              {/* Stats pills */}
+              <div className="space-y-2 mb-5">
+                <div className="flex gap-2">
+                  {statPill(<TrendingUp className="h-3.5 w-3.5" style={{ color:"#a78bfa" }} />, "PP", pp)}
+                  {statPill(<X className="h-3.5 w-3.5" style={{ color:"#a78bfa" }} />, "KP", kp)}
+                  {statPill(<BarChart2 className="h-3.5 w-3.5" style={{ color:"#a78bfa" }} />, "TP", tp)}
+                </div>
+                <div className="flex gap-2">
+                  {statPill(<Trophy className="h-3.5 w-3.5" style={{ color:"#a78bfa" }} />, "WIN", wins)}
+                  {statPill(<Hash className="h-3.5 w-3.5" style={{ color:"#a78bfa" }} />, "MP", matchCount)}
+                  {statPill(<ListOrdered className="h-3.5 w-3.5" style={{ color:"#a78bfa" }} />, "Slot", team.slot ?? "—")}
+                </div>
+              </div>
+              {/* Bonus / Penalty */}
+              <div className="grid grid-cols-2 gap-3 mb-5">
+                <button className="py-3.5 rounded-2xl text-sm font-semibold press-scale" style={{ background:"rgba(124,58,237,0.3)", color:"#e9d5ff" }}>Add bonus points</button>
+                <button className="py-3.5 rounded-2xl text-sm font-semibold press-scale" style={{ background:"rgba(255,255,255,0.06)", color:"rgba(196,181,253,0.7)" }}>Add penalty points</button>
+              </div>
+              {/* Edit match */}
+              <div className="rounded-2xl px-4 py-4 mb-4 text-center" style={{ background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.06)" }}>
+                <p className="text-sm font-semibold text-white mb-1">Edit match</p>
+                <p className="text-xs italic" style={{ color:"rgba(196,181,253,0.45)" }}>Once you do <strong className="text-white">Calculate</strong> the matches will appear here</p>
+              </div>
+              {/* Edit Players */}
+              <div className="rounded-2xl overflow-hidden mb-4" style={{ background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.06)" }}>
+                <p className="text-center text-sm font-semibold text-white py-3" style={{ borderBottom:"1px solid rgba(255,255,255,0.06)" }}>Edit Players</p>
+                {(team.players ?? []).map((player, pi) => (
+                  <div key={pi} className="flex items-center gap-3 px-4 py-3" style={{ borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
+                    <div className="h-9 w-9 rounded-xl flex items-center justify-center shrink-0" style={{ background:"rgba(124,58,237,0.15)", border:"1px solid rgba(124,58,237,0.2)" }}>
+                      <UserPlus className="h-4 w-4" style={{ color:"rgba(196,181,253,0.4)" }} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-white truncate">{player}</p>
+                      <p className="text-xs" style={{ color:"rgba(196,181,253,0.35)" }}>finishes 00</p>
+                    </div>
+                    <button className="p-1" style={{ color:"rgba(196,181,253,0.3)" }}><MoreVertical className="h-4 w-4" /></button>
+                  </div>
+                ))}
+                <button className="w-full py-3 flex items-center justify-center gap-2 text-sm font-medium" style={{ color:"rgba(196,181,253,0.5)" }}>
+                  <Plus className="h-4 w-4" /> Add a player
+                </button>
+              </div>
+              <button className="w-full text-center text-sm font-semibold py-2" style={{ color:"#a78bfa" }}>Show team gfx</button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ADD TEAMS MODAL */}
+
       {showAdd && tournament && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center anim-fade-in" style={{ background: "rgba(0,0,0,0.8)" }} onClick={() => setShowAdd(false)}>
-          <div className="rounded-t-2xl sm:rounded-2xl p-5 pb-24 sm:pb-5 w-full max-w-md shadow-2xl max-h-[80vh] flex flex-col anim-sheet-up" style={{ background: "#150e25", border: "1px solid rgba(124,58,237,0.25)" }} onClick={(e) => e.stopPropagation()}>
-            <div className="w-10 h-1 rounded-full mx-auto mb-4" style={{ background: "rgba(124,58,237,0.35)" }} />
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-base font-bold text-white">Add Teams — {tournament.name}</h2>
-              <button onClick={() => setShowAdd(false)} className="p-1 rounded-lg hover:bg-zinc-800"><X className="h-4 w-4 text-zinc-400" /></button>
+          <div className="rounded-t-2xl sm:rounded-2xl w-full max-w-md shadow-2xl max-h-[80dvh] flex flex-col anim-sheet-up" style={{ background: "#150e25", border: "1px solid rgba(124,58,237,0.25)" }} onClick={(e) => e.stopPropagation()}>
+            {/* Drag handle + header — never scroll */}
+            <div className="px-5 pt-5 pb-4 shrink-0">
+              <div className="w-10 h-1 rounded-full mx-auto mb-4" style={{ background: "rgba(124,58,237,0.35)" }} />
+              <div className="flex items-center justify-between">
+                <h2 className="text-base font-bold text-white">Add Teams — {tournament.name}</h2>
+                <button onClick={() => setShowAdd(false)} className="p-1 rounded-lg hover:bg-zinc-800"><X className="h-4 w-4 text-zinc-400" /></button>
+              </div>
             </div>
-            <div className="space-y-2.5 overflow-y-auto flex-1 pr-1">
+            {/* Scrollable team rows */}
+            <div className="space-y-2.5 overflow-y-auto flex-1 px-5 pr-4">
               {inputs.map((row, i) => (
                 <div key={i} className="space-y-1.5 pb-2" style={{ borderBottom: "1px solid rgba(124,58,237,0.08)" }}>
                   <div className="flex items-center gap-2">
-                    <input value={row.name} onChange={(e) => updateRow(i, "name", e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addRow(); setTimeout(() => { document.querySelectorAll<HTMLInputElement>("[data-team-input]")[inputs.length]?.focus(); }, 50); } }} data-team-input autoFocus={i === inputs.length - 1} placeholder={`Team name`} maxLength={20} className="flex-1 px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-sm text-white placeholder-zinc-500 focus:border-violet-500/60 focus:outline-none transition-all" />
+                    <input value={row.name} onChange={(e) => updateRow(i, "name", e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addRow(); setTimeout(() => { document.querySelectorAll<HTMLInputElement>("[data-team-input]")[inputs.length]?.focus(); }, 50); } }} onPaste={(e) => handleModalTeamPaste(e, i)} data-team-input autoFocus={i === inputs.length - 1} placeholder={`Team name`} maxLength={20} className="flex-1 px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-sm text-white placeholder-zinc-500 focus:border-violet-500/60 focus:outline-none transition-all" />
                     {inputs.length > 1 && <button onClick={() => removeRow(i)} className="p-1 rounded-md hover:bg-zinc-800 shrink-0"><Minus className="h-3.5 w-3.5 text-zinc-500" /></button>}
                   </div>
                   <input
@@ -400,10 +959,13 @@ export default function TeamsPage() {
                 </div>
               ))}
             </div>
-            <button onClick={addRow} className="mt-3 w-full py-2 rounded-lg border border-dashed border-zinc-600 text-xs text-zinc-400 hover:text-zinc-200 transition-all">+ Add another</button>
-            <div className="flex gap-2 mt-4">
-              <button onClick={() => setShowAdd(false)} className="flex-1 px-4 py-2.5 rounded-lg text-sm font-medium text-zinc-300 bg-zinc-800 border border-zinc-700 hover:bg-zinc-700 transition-all">Cancel</button>
-              <button onClick={handleSave} disabled={validCount === 0} className="flex-1 px-4 py-2.5 rounded-lg text-sm font-bold text-white disabled:opacity-30 transition-all" style={{ background: "linear-gradient(135deg,#7c3aed,#9333ea)" }}>Add {validCount > 0 ? validCount : ""} Team{validCount !== 1 ? "s" : ""}</button>
+            {/* Sticky bottom — always visible above keyboard */}
+            <div className="px-5 pb-5 pt-3 shrink-0" style={{ borderTop: "1px solid rgba(124,58,237,0.1)" }}>
+              <button onClick={addRow} className="w-full py-2 rounded-lg border border-dashed border-zinc-600 text-xs text-zinc-400 hover:text-zinc-200 transition-all mb-3">+ Add another</button>
+              <div className="flex gap-2">
+                <button onClick={() => setShowAdd(false)} className="flex-1 px-4 py-2.5 rounded-lg text-sm font-medium text-zinc-300 bg-zinc-800 border border-zinc-700 hover:bg-zinc-700 transition-all">Cancel</button>
+                <button onClick={handleSave} disabled={validCount === 0} className="flex-1 px-4 py-2.5 rounded-lg text-sm font-bold text-white disabled:opacity-30 transition-all" style={{ background: "linear-gradient(135deg,#7c3aed,#9333ea)" }}>Add {validCount > 0 ? validCount : ""} Team{validCount !== 1 ? "s" : ""}</button>
+              </div>
             </div>
           </div>
         </div>
@@ -544,24 +1106,28 @@ export default function TeamsPage() {
             <div className="overflow-y-auto flex-1">
               {/* Action rows */}
               {([
+                {
+                  icon: <Pen className="h-5 w-5" />, label: "Rename tournament", action: () => {
+                    setRenameValue(tournament.name);
+                    setShowRename(r => !r);
+                  }
+                },
+                {
+                  icon: <UserPlus className="h-5 w-5" />, label: "Edit teams", action: () => {
+                    setShowEdit(false);
+                    setAddForm({ name: "", slot: String((tournament?.teams.length ?? 0) + 1), tags: "" });
+                    setPlayerInputs([""]);
+                    setAddScreenTab("add");
+                    setAddScreenTab("add"); setAddScreenMode("edit");
+                    setInitialTeamCount(tournament?.teams.length ?? 0);
+                    setShowAddScreen(true);
+                  }
+                },
                 { icon: <Pencil className="h-5 w-5" />, label: "Change point system", action: () => {
                   setEditingPoints(tournament.pointSystem ?? DEFAULT_BGMI_POINTS);
                   setShowEdit(false);
                   setShowPointSystem(true);
                 }},
-                {
-                  icon: <UserPlus className="h-5 w-5" />, label: "Add new team", action: () => {
-                    setShowEdit(false);
-                    setInputs([{ name: "", phone: "", players: "", showPhone: false }]);
-                    setShowAdd(true);
-                  }
-                },
-                {
-                  icon: <Trash2 className="h-5 w-5" />, label: "Delete tournament", danger: true, action: () => {
-                    handleDeleteTournament(tournament.id);
-                    setShowEdit(false);
-                  }
-                },
                 {
                   icon: <ListX className="h-5 w-5" />, label: "Delete Points by match", action: () => {
                     const updated = { ...tournament, geminiData: undefined, assignments: {} };
@@ -571,9 +1137,9 @@ export default function TeamsPage() {
                   }
                 },
                 {
-                  icon: <Pen className="h-5 w-5" />, label: "Rename tournament", action: () => {
-                    setRenameValue(tournament.name);
-                    setShowRename(r => !r);
+                  icon: <Trash2 className="h-5 w-5" />, label: "Delete tournament", danger: true, action: () => {
+                    handleDeleteTournament(tournament.id);
+                    setShowEdit(false);
                   }
                 },
               ] as { icon: React.ReactNode; label: string; danger?: boolean; action: () => void }[]).map((item, idx) => (
@@ -621,32 +1187,6 @@ export default function TeamsPage() {
                 </div>
               ))}
 
-              {/* Teams list */}
-              {tournament.teams.length > 0 && (
-                <div>
-                  <p className="px-5 py-3 text-[11px] font-bold uppercase tracking-widest" style={{ color: "rgba(167,139,250,0.4)" }}>
-                    Teams — {tournament.teams.length}
-                  </p>
-                  {tournament.teams.map((team, idx) => (
-                    <div key={team.id} className="flex items-center gap-3 px-5 py-3" style={{ borderTop: "1px solid rgba(124,58,237,0.08)" }}>
-                      <div className="h-10 w-10 rounded-xl flex items-center justify-center shrink-0"
-                        style={{ background: "rgba(124,58,237,0.15)", border: "1px solid rgba(124,58,237,0.2)" }}>
-                        <span className="text-[11px] font-black" style={{ color: "#a78bfa" }}>{String(idx + 1).padStart(2, "0")}</span>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs" style={{ color: "rgba(167,139,250,0.45)" }}>Slot: {team.slot ?? idx + 1}</p>
-                        <p className="text-sm font-semibold text-white truncate">{team.name}</p>
-                      </div>
-                      <button
-                        onClick={() => handleDelete(team.id)}
-                        className="p-2 rounded-lg press-scale"
-                        style={{ color: "rgba(124,58,237,0.4)" }}>
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
               <div className="h-8" />
             </div>
           </div>
