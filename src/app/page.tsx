@@ -1598,11 +1598,10 @@ export default function TeamsPage() {
                   {/* Steps — always visible */}
                   <div className="space-y-3">
                     {[
-                      { step: "1", title: "Tap the button below", desc: "Copies the prompt & opens Gemini — then paste it in the chat" },
-                      { step: "2", title: "Paste & send", desc: "Paste the copied prompt into Gemini and hit send" },
-                      { step: "3", title: "Upload your screenshots", desc: "Reply with your match result screenshots in the next message" },
-                      { step: "4", title: "Copy the JSON reply", desc: "Gemini responds with a JSON block — select and copy it" },
-                      { step: "5", title: "Paste it here", desc: "Come back and tap the purple 'Paste' button above" },
+                      { step: "1", title: "Copy the prompt below", desc: "Tap Copy Prompt, then open Gemini and paste it" },
+                      { step: "2", title: "Send & upload screenshots", desc: "Reply with your match result screenshots in the next message" },
+                      { step: "3", title: "Copy the JSON reply", desc: "Gemini responds with a JSON block — select and copy it" },
+                      { step: "4", title: "Paste it here", desc: "Come back and tap the purple 'Paste' button below" },
                     ].map((s) => (
                       <div key={s.step} className="flex items-start gap-3">
                         <div className="h-7 w-7 rounded-lg shrink-0 flex items-center justify-center text-xs font-black"
@@ -1619,10 +1618,10 @@ export default function TeamsPage() {
                     {/* Actions */}
                     <div className="pt-2 space-y-2">
                       <button
-                        onClick={openGemini}
+                        onClick={copyPrompt}
                         className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold text-white press-scale"
                         style={{ background: "linear-gradient(135deg,#7c3aed,#9333ea)", boxShadow: "0 4px 20px rgba(124,58,237,0.4)" }}>
-                        Open Gemini (copies prompt)
+                        Copy Prompt
                       </button>
                       <button
                         onClick={pasteJson}
