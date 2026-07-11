@@ -13,7 +13,7 @@ export async function GET() {
     orderBy: { updatedAt: "desc" },
   });
 
-  const tournaments: Tournament[] = rows.map((r) => r.data as Tournament);
+  const tournaments: Tournament[] = rows.map((r) => r.data as unknown as Tournament);
   return NextResponse.json({ tournaments });
 }
 
