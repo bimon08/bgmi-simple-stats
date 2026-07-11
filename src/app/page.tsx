@@ -95,6 +95,7 @@ export default function TeamsPage() {
   const [showImportCode, setShowImportCode] = useState(false);
   const [importCode, setImportCode] = useState("");
   const [importLoading, setImportLoading] = useState(false);
+  const [selectedMatch, setSelectedMatch] = useState<number | null>(null);
 
   // Load local immediately, then silently pull + merge from DB on mount
   useEffect(() => {
@@ -171,7 +172,26 @@ export default function TeamsPage() {
   const computeStandings = (t: Tournament) => {
     if (!t.geminiData) { setStandings([]); return; }
     const assignMap = t.assignments ?? {};
-    const rows: StandingRow[] = t.geminiData.groups.map((group) => {
+    // Normalize in case stored data pre-dates the totals computation
+    const ps = t.pointSystem ?? DEFAULT_BGMI_POINTS;
+    const groups = t.geminiData.groups.map((group) => {
+      if (group.totals) return group; // already normalized
+      const matches = group.matches.map((m) => {
+        const teamKills = Object.values(m.playerKills ?? {}).reduce((a, b) => a + b, 0);
+        const placementPoints = ps.positionPoints[m.position - 1] ?? 0;
+        const matchPoints = placementPoints + teamKills * ps.killPoints;
+        return { ...m, teamKills, placementPoints, matchPoints };
+      });
+      const totals = {
+        totalPoints: matches.reduce((a, m) => a + m.matchPoints, 0),
+        chickenDinners: matches.filter((m) => m.position === 1).length,
+        totalPlacementPoints: matches.reduce((a, m) => a + m.placementPoints, 0),
+        totalKills: matches.reduce((a, m) => a + m.teamKills, 0),
+        lastMatchPosition: matches[matches.length - 1]?.position ?? 0,
+      };
+      return { ...group, matches, totals };
+    });
+    const rows: StandingRow[] = groups.map((group) => {
       const teamId = assignMap[group.group];
       const team = t.teams.find((tm) => tm.id === teamId);
       return {
@@ -188,6 +208,26 @@ export default function TeamsPage() {
         matchCount: group.matches.length,
       };
     });
+
+    // Add 0-stat rows for registered teams that didn't appear in any group
+    const assignedTeamIds = new Set(Object.values(assignMap));
+    t.teams.forEach((team) => {
+      if (assignedTeamIds.has(team.id)) return; // already in standings
+      rows.push({
+        teamId: team.id,
+        teamName: team.name,
+        group: "—",
+        players: team.players ?? [],
+        totalPoints: 0,
+        chickenDinners: 0,
+        placementPoints: 0,
+        totalKills: 0,
+        lastMatchPosition: 0,
+        positions: [],
+        matchCount: 0,
+      });
+    });
+
     rows.sort(compareTiebreaker);
     setStandings(rows);
   };
@@ -249,7 +289,25 @@ export default function TeamsPage() {
   const openAction = (t: Tournament, action: string) => {
     setTournament(t); setOpenDropdown(null); setExpandedGroups(new Set());
     if (t.geminiData) {
-      setGroups(t.geminiData.groups.map((g) => ({ ...g, teamId: t.assignments?.[g.group], teamName: t.teams.find((tm) => tm.id === t.assignments?.[g.group])?.name })));
+      const ps = t.pointSystem ?? DEFAULT_BGMI_POINTS;
+      const normalizedGroups = t.geminiData.groups.map((g) => {
+        if (g.totals) return g;
+        const matches = g.matches.map((m) => {
+          const teamKills = Object.values(m.playerKills ?? {}).reduce((a, b) => a + b, 0);
+          const placementPoints = ps.positionPoints[m.position - 1] ?? 0;
+          const matchPoints = placementPoints + teamKills * ps.killPoints;
+          return { ...m, teamKills, placementPoints, matchPoints };
+        });
+        const totals = {
+          totalPoints: matches.reduce((a, m) => a + m.matchPoints, 0),
+          chickenDinners: matches.filter((m) => m.position === 1).length,
+          totalPlacementPoints: matches.reduce((a, m) => a + m.placementPoints, 0),
+          totalKills: matches.reduce((a, m) => a + m.teamKills, 0),
+          lastMatchPosition: matches[matches.length - 1]?.position ?? 0,
+        };
+        return { ...g, matches, totals };
+      });
+      setGroups(normalizedGroups.map((g) => ({ ...g, teamId: t.assignments?.[g.group], teamName: t.teams.find((tm) => tm.id === t.assignments?.[g.group])?.name })));
       setAssignments(t.assignments || {}); setMatchesDetected(t.geminiData.matches_detected); computeStandings(t);
     } else { setGroups([]); setAssignments(t.assignments || {}); setMatchesDetected(0); setStandings([]); }
     switch (action) {
@@ -449,11 +507,41 @@ export default function TeamsPage() {
     window.open("https://gemini.google.com/app", "_blank", "noopener,noreferrer");
   };
   const pasteJson = async () => { try { processJson(await navigator.clipboard.readText()); } catch { toast.error("Allow clipboard access"); } };
+
+  /** Normalize raw Gemini output to match our GeminiOutput type */
+  const normalizeGeminiData = (raw: GeminiOutput): GeminiOutput => {
+    const ps = tournament?.pointSystem ?? DEFAULT_BGMI_POINTS;
+    const groups = raw.groups.map((g) => {
+      // Normalize matches: fill in missing placementPoints, teamKills, matchPoints
+      const matches = g.matches.map((m) => {
+        const teamKills = Object.values(m.playerKills ?? {}).reduce((a, b) => a + b, 0);
+        const placementPoints = ps.positionPoints[m.position - 1] ?? 0;
+        const matchPoints = placementPoints + teamKills * ps.killPoints;
+        return { ...m, teamKills, placementPoints, matchPoints };
+      });
+      // Normalize players: accept array or object → always string[]
+      const players: string[] = Array.isArray(g.players)
+        ? g.players
+        : Object.keys(g.players as unknown as Record<string, number>);
+      // Compute totals from matches
+      const totals = {
+        totalPoints: matches.reduce((a, m) => a + m.matchPoints, 0),
+        chickenDinners: matches.filter((m) => m.position === 1).length,
+        totalPlacementPoints: matches.reduce((a, m) => a + m.placementPoints, 0),
+        totalKills: matches.reduce((a, m) => a + m.teamKills, 0),
+        lastMatchPosition: matches[matches.length - 1]?.position ?? 0,
+      };
+      return { ...g, players, matches, totals };
+    });
+    return { ...raw, groups };
+  };
+
   const processJson = (text: string) => {
     if (!tournament) return;
     try {
-      const data = JSON.parse(text) as GeminiOutput;
-      if (!data.groups || !Array.isArray(data.groups)) throw new Error("Invalid JSON");
+      const raw = JSON.parse(text) as GeminiOutput;
+      if (!raw.groups || !Array.isArray(raw.groups)) throw new Error("Invalid JSON");
+      const data = normalizeGeminiData(raw);
 
       // Auto-assign: match group name → registered team name
       const autoAssignments: Record<string, string> = { ...assignments };
@@ -489,7 +577,7 @@ export default function TeamsPage() {
       const enrichedTeams = tournament.teams.map((team) => {
         const matchedGroup = data.groups.find((g) => autoAssignments[g.group] === team.id);
         if (!matchedGroup) return team;
-        const discovered = Object.keys(matchedGroup.players);
+        const discovered = matchedGroup.players; // already string[]
         const existing = team.players ?? [];
         const existingLower = new Set(existing.map((p) => p.toLowerCase()));
         const newPlayers = discovered.filter((p) => {
@@ -1444,7 +1532,22 @@ export default function TeamsPage() {
                 <h1 className="text-xl font-bold text-white">Calculate — {tournament.name}</h1>
                 <p className="text-xs mt-0.5" style={{ color: "rgba(167,139,250,0.5)" }}>{groups.length > 0 ? `${groups.length} groups · ${matchesDetected} matches` : "Follow the guide below to get started"}</p>
               </div>
-              <button onClick={() => setShowStats(false)} className="p-1.5 rounded-lg" style={{ color: "rgba(167,139,250,0.5)" }}><X className="h-5 w-5" /></button>
+              <div className="flex items-center gap-2">
+                {groups.length > 0 && (
+                  <button
+                    onClick={() => {
+                      if (!tournament) return;
+                      const updated = { ...tournament, geminiData: undefined, assignments: {} };
+                      save(updated); setGroups([]); setAssignments({}); setMatchesDetected(0); setStandings([]); setSelectedMatch(null);
+                      toast.success("Match data cleared");
+                    }}
+                    className="p-1.5 rounded-lg transition-colors"
+                    style={{ color: "rgba(239,68,68,0.6)" }}
+                    title="Reset match data"
+                  ><Trash2 className="h-4 w-4" /></button>
+                )}
+                <button onClick={() => setShowStats(false)} className="p-1.5 rounded-lg" style={{ color: "rgba(167,139,250,0.5)" }}><X className="h-5 w-5" /></button>
+              </div>
             </div>
             {groups.length === 0 ? (
               <div className="mt-6 px-1">
@@ -1511,6 +1614,28 @@ export default function TeamsPage() {
 
             ) : (
               <div className="space-y-3">
+                {/* Match selector pills */}
+                {matchesDetected > 1 && (
+                  <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1" style={{ scrollbarWidth: "none" }}>
+                    <button
+                      onClick={() => setSelectedMatch(null)}
+                      className="shrink-0 px-4 py-1.5 rounded-full text-xs font-bold transition-all"
+                      style={selectedMatch === null
+                        ? { background: "linear-gradient(135deg,#7c3aed,#9333ea)", color: "#fff" }
+                        : { background: "rgba(124,58,237,0.12)", color: "rgba(167,139,250,0.7)", border: "1px solid rgba(124,58,237,0.2)" }}
+                    >All</button>
+                    {Array.from({ length: matchesDetected }, (_, i) => i + 1).map((mn) => (
+                      <button
+                        key={mn}
+                        onClick={() => setSelectedMatch(mn)}
+                        className="shrink-0 px-4 py-1.5 rounded-full text-xs font-bold transition-all"
+                        style={selectedMatch === mn
+                          ? { background: "linear-gradient(135deg,#7c3aed,#9333ea)", color: "#fff" }
+                          : { background: "rgba(124,58,237,0.12)", color: "rgba(167,139,250,0.7)", border: "1px solid rgba(124,58,237,0.2)" }}
+                      >M{mn}</button>
+                    ))}
+                  </div>
+                )}
                 {groups.map((group) => {
                   const topKiller = getTopKiller(group);
                   const isAssigned = !!group.teamId;
@@ -1539,13 +1664,31 @@ export default function TeamsPage() {
                         </button>
                       </div>
                       <div className="px-4 pb-3 flex items-center gap-3 flex-wrap">
-                        <span className="inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-[10px]"><span className="text-white/40">PTS</span><span className="font-bold text-violet-400">{group.totals.totalPoints}</span></span>
-                        <span className="inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-[10px]"><span className="text-white/40">K</span><span className="font-medium text-white">{group.totals.totalKills}</span></span>
-                        {group.totals.chickenDinners > 0 && <span className="text-[10px] text-yellow-400 font-semibold">🍗 {group.totals.chickenDinners}</span>}
-                        <span className="inline-flex items-center gap-1 text-[10px] text-zinc-500"><Trophy className="h-2.5 w-2.5 text-violet-400" />{topKiller.name} ({topKiller.kills}k)</span>
-                        <div className="flex items-center gap-1 ml-auto">
-                          {group.matches.map((m) => <span key={m.match} className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${m.position === 1 ? "bg-violet-500/15 text-violet-400" : m.position <= 3 ? "bg-emerald-500/15 text-emerald-400" : "bg-zinc-800 text-zinc-500"}`}>#{m.position}</span>)}
-                        </div>
+                        {(() => {
+                          const ps = tournament.pointSystem ?? DEFAULT_BGMI_POINTS;
+                          if (selectedMatch !== null) {
+                            const m = group.matches.find((m) => m.match === selectedMatch);
+                            if (!m) return <span className="text-[10px] text-zinc-500">Did not play M{selectedMatch}</span>;
+                            const kills = m.teamKills ?? Object.values(m.playerKills ?? {}).reduce((a, b) => a + b, 0);
+                            const pp = m.placementPoints ?? (ps.positionPoints[m.position - 1] ?? 0);
+                            const pts = pp + kills * ps.killPoints;
+                            return (<>
+                              <span className="inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-[10px]"><span className="text-white/40">PTS</span><span className="font-bold text-violet-400">{pts}</span></span>
+                              <span className="inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-[10px]"><span className="text-white/40">K</span><span className="font-medium text-white">{kills}</span></span>
+                              {m.position === 1 && <span className="text-[10px] text-yellow-400 font-semibold">🍗 Chicken!</span>}
+                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ml-auto ${m.position === 1 ? "bg-violet-500/15 text-violet-400" : m.position <= 3 ? "bg-emerald-500/15 text-emerald-400" : "bg-zinc-800 text-zinc-500"}`}>#{m.position}</span>
+                            </>);
+                          }
+                          return (<>
+                            <span className="inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-[10px]"><span className="text-white/40">PTS</span><span className="font-bold text-violet-400">{group.totals.totalPoints}</span></span>
+                            <span className="inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-[10px]"><span className="text-white/40">K</span><span className="font-medium text-white">{group.totals.totalKills}</span></span>
+                            {group.totals.chickenDinners > 0 && <span className="text-[10px] text-yellow-400 font-semibold">🍗 {group.totals.chickenDinners}</span>}
+                            <span className="inline-flex items-center gap-1 text-[10px] text-zinc-500"><Trophy className="h-2.5 w-2.5 text-violet-400" />{topKiller.name} ({topKiller.kills}k)</span>
+                            <div className="flex items-center gap-1 ml-auto">
+                              {group.matches.map((m) => <span key={m.match} className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${m.position === 1 ? "bg-violet-500/15 text-violet-400" : m.position <= 3 ? "bg-emerald-500/15 text-emerald-400" : "bg-zinc-800 text-zinc-500"}`}>#{m.position}</span>)}
+                            </div>
+                          </>);
+                        })()}
                       </div>
                       {isExpanded && (
                         <div className="px-4 pb-3 space-y-1.5 border-t border-zinc-800/50 pt-3">
