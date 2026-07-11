@@ -544,18 +544,43 @@ export default function TeamsPage() {
       const data = normalizeGeminiData(raw);
 
       // Auto-assign: match group name → registered team name
+      // Track which teamIds are already taken so one team can't be assigned twice
       const autoAssignments: Record<string, string> = { ...assignments };
+      const usedTeamIds = new Set(Object.values(autoAssignments));
+
       data.groups.forEach((g) => {
-        if (autoAssignments[g.group]) return; // already manually assigned
+        if (autoAssignments[g.group]) return; // already assigned
         const gLower = g.group.toLowerCase().trim();
+
+        const available = (t: { id: string }) => !usedTeamIds.has(t.id);
+
         // 1. Exact name match
-        let match = tournament.teams.find((t) => t.name.toLowerCase().trim() === gLower);
-        // 2. Contains match (e.g. "TSMent" matches "TSM" or vice versa)
-        if (!match) match = tournament.teams.find((t) => {
-          const tLower = t.name.toLowerCase().trim();
-          return tLower.includes(gLower) || gLower.includes(tLower);
-        });
-        if (match) autoAssignments[g.group] = match.id;
+        let match = tournament.teams.find((t) => available(t) && t.name.toLowerCase().trim() === gLower);
+
+        // 2. Contains match — only if both sides are ≥4 chars to avoid false positives
+        if (!match && gLower.length >= 4) {
+          match = tournament.teams.find((t) => {
+            if (!available(t)) return false;
+            const tLower = t.name.toLowerCase().trim();
+            return (tLower.length >= 4 && tLower.includes(gLower)) ||
+                   (tLower.length >= 4 && gLower.includes(tLower));
+          });
+        }
+
+        // 3. Player-name fallback: if any player in this group is registered on a team
+        if (!match) {
+          const registeredMap = new Map<string, string>(); // lowercase player name → teamId
+          tournament.teams.forEach((t) => (t.players ?? []).forEach((p) => registeredMap.set(p.toLowerCase().trim(), t.id)));
+          for (const player of g.players) {
+            const tid = registeredMap.get(player.toLowerCase().trim());
+            if (tid) {
+              const found = tournament.teams.find((t) => t.id === tid && available(t));
+              if (found) { match = found; break; }
+            }
+          }
+        }
+
+        if (match) { autoAssignments[g.group] = match.id; usedTeamIds.add(match.id); }
       });
 
       const assigned: AssignedGroup[] = data.groups.map((g) => ({
