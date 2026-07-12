@@ -1,5 +1,5 @@
 "use client";
-import { useRef } from "react";
+import React, { useState } from "react";
 import { X, ImageIcon, HelpCircle, UserPlus, Phone, Plus, Clipboard, Users, Trophy } from "lucide-react";
 import { toast } from "sonner";
 import { Tournament, Team } from "@/lib/types";
@@ -32,6 +32,11 @@ interface Props {
   setShowAddScreen: (v: boolean) => void;
   setShowCreate: (v: boolean) => void;
   setAddScreenSnapshot: (v: SnapShot | null) => void;
+  // Clone flow (lazy — draft not saved until confirmed)
+  isPendingClone?: boolean;
+  onConfirmClone?: (bookedTeamIds: Set<string>) => void;
+  onCancelClone?: () => void;
+  onEditTeam?: (team: Team) => void;
 }
 
 const avatarColors = ["#7c3aed","#9333ea","#6d28d9","#8b5cf6","#a855f7"];
@@ -48,8 +53,11 @@ export default function AddTeamsScreen({
   handleAddTeamToScreen, handleTeamNamePaste, parseTeamPaste,
   handleDeleteTournament, save,
   setShowAddScreen, setShowCreate, setAddScreenSnapshot,
+  isPendingClone = false, onConfirmClone, onCancelClone, onEditTeam,
 }: Props) {
+  const [hasChanges, setHasChanges] = useState(false);
   const teams = tournament.teams;
+  const isCloneMode = isPendingClone || clonedFromId === tournament.id;
 
   return (
     <div className="fixed inset-0 z-[55] flex flex-col anim-fade-in" style={{ background: "#0d0820" }}>
@@ -100,7 +108,7 @@ export default function AddTeamsScreen({
                     </div>
                   </div>
                 </div>
-                <input value={addForm.tags} onChange={(e) => setAddForm((f) => ({ ...f, tags: e.target.value }))} placeholder="e.g. alpha, squad-1" className="w-full bg-transparent text-white text-xs focus:outline-none" style={{ caretColor:"#a78bfa" }} />
+                <input value={addForm.tags} onChange={(e) => { setHasChanges(true); setAddForm((f) => ({ ...f, tags: e.target.value })); }} placeholder="e.g. alpha, squad-1" className="w-full bg-transparent text-white text-xs focus:outline-none" style={{ caretColor:"#a78bfa" }} />
               </div>
             </div>
 
@@ -113,6 +121,7 @@ export default function AddTeamsScreen({
                   value={addForm.name}
                   onChange={(e) => {
                     const v = e.target.value;
+                    setHasChanges(true);
                     if (v.includes('\n') || v.includes('\r')) {
                       const parsed = parseTeamPaste(v);
                       if (parsed) {
@@ -124,7 +133,7 @@ export default function AddTeamsScreen({
                     }
                     setAddForm((f) => ({ ...f, name: v }));
                   }}
-                  onKeyDown={(e) => { if (e.key === "Enter" && addForm.name.trim()) handleAddTeamToScreen(); }}
+                  onKeyDown={(e) => { if (e.key === "Enter" && addForm.name.trim()) { setHasChanges(true); handleAddTeamToScreen(); }}}
                   onPaste={handleTeamNamePaste}
                   placeholder="Enter team name"
                   className="flex-1 bg-transparent text-white text-sm focus:outline-none"
@@ -135,6 +144,7 @@ export default function AddTeamsScreen({
               <div className="relative flex items-center gap-2 mt-2">
                 <button
                   onClick={async () => {
+                    setHasChanges(true);
                     try {
                       const text = await navigator.clipboard.readText();
                       if (!text.trim()) { toast.error("Clipboard is empty"); return; }
@@ -177,7 +187,7 @@ export default function AddTeamsScreen({
               </div>
               <div className="flex items-center gap-3">
                 <Phone className="h-4 w-4 shrink-0" style={{ color:"rgba(196,181,253,0.4)" }} />
-                <input type="tel" value={addForm.phone} onChange={(e) => setAddForm((f) => ({ ...f, phone: e.target.value }))} placeholder="e.g. +91 98765 43210" className="flex-1 bg-transparent text-white text-sm focus:outline-none" style={{ caretColor:"#a78bfa" }} />
+                <input type="tel" value={addForm.phone} onChange={(e) => { setHasChanges(true); setAddForm((f) => ({ ...f, phone: e.target.value })); }} placeholder="e.g. +91 98765 43210" className="flex-1 bg-transparent text-white text-sm focus:outline-none" style={{ caretColor:"#a78bfa" }} />
               </div>
             </div>
 
@@ -190,13 +200,13 @@ export default function AddTeamsScreen({
                     <input
                       ref={(el) => { playerInputRefs.current[i] = el; }}
                       value={val}
-                      onChange={(e) => { const u = [...playerInputs]; u[i] = e.target.value; setPlayerInputs(u); }}
+                      onChange={(e) => { setHasChanges(true); const u = [...playerInputs]; u[i] = e.target.value; setPlayerInputs(u); }}
                       placeholder={`Player ${i + 1}`}
                       className="flex-1 bg-transparent text-white text-sm focus:outline-none border-b"
                       style={{ caretColor:"#a78bfa", borderColor:"rgba(124,58,237,0.2)" }}
                     />
                     {playerInputs.length > 1 && (
-                      <button onClick={() => setPlayerInputs(playerInputs.filter((_, pidx) => pidx !== i))} className="shrink-0 p-0.5" style={{ color:"rgba(196,181,253,0.35)" }}>
+                      <button onClick={() => { setHasChanges(true); setPlayerInputs(playerInputs.filter((_, pidx) => pidx !== i)); }} className="shrink-0 p-0.5" style={{ color:"rgba(196,181,253,0.35)" }}>
                         <X className="h-3.5 w-3.5" />
                       </button>
                     )}
@@ -205,6 +215,7 @@ export default function AddTeamsScreen({
               </div>
               <button
                 onClick={() => {
+                  setHasChanges(true);
                   const newInputs = [...playerInputs, ""];
                   setPlayerInputs(newInputs);
                   requestAnimationFrame(() => { playerInputRefs.current[newInputs.length - 1]?.focus(); });
@@ -217,7 +228,7 @@ export default function AddTeamsScreen({
             </div>
 
             {/* Add Team button */}
-            <button onClick={handleAddTeamToScreen} disabled={!addForm.name.trim()} className="w-full py-4 rounded-2xl font-bold text-white text-sm flex items-center justify-center gap-2 press-scale disabled:opacity-40" style={{ background:"linear-gradient(135deg,#6d28d9,#9333ea)", boxShadow:"0 4px 24px rgba(109,40,217,0.4)" }}>
+            <button onClick={() => { setHasChanges(true); handleAddTeamToScreen(); }} disabled={!addForm.name.trim()} className="w-full py-4 rounded-2xl font-bold text-white text-sm flex items-center justify-center gap-2 press-scale disabled:opacity-40" style={{ background:"linear-gradient(135deg,#6d28d9,#9333ea)", boxShadow:"0 4px 24px rgba(109,40,217,0.4)" }}>
               <Users className="h-4 w-4" />+ Add Team
             </button>
           </>
@@ -227,9 +238,9 @@ export default function AddTeamsScreen({
             {teams.length === 0 ? (
               <p className="text-center text-sm mt-10" style={{ color:"rgba(196,181,253,0.35)" }}>No teams added yet</p>
             ) : teams.map((team, idx) => {
-              const isCloneMode = clonedFromId === tournament.id;
               const isOut = isCloneMode ? excludedCloneTeams.has(team.id) : !!team.out;
               const toggleOut = () => {
+                setHasChanges(true);
                 if (isCloneMode) {
                   setExcludedCloneTeams(prev => {
                     const n = new Set(prev);
@@ -241,26 +252,53 @@ export default function AddTeamsScreen({
                 }
               };
               return (
-                <div key={team.id} role="button" tabIndex={0}
-                  onClick={toggleOut}
-                  onKeyDown={(e) => e.key === "Enter" && toggleOut()}
-                  className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-left press-scale cursor-pointer transition-all"
-                  style={{ background: isOut ? "rgba(239,68,68,0.06)" : "rgba(124,58,237,0.08)", border: `1px solid ${isOut ? "rgba(239,68,68,0.25)" : "rgba(124,58,237,0.15)"}`, opacity: isOut ? 0.5 : 1 }}
+                <div key={team.id}
+                  className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl cursor-pointer press-scale"
+                  style={{ background: "rgba(124,58,237,0.08)", border: "1px solid rgba(124,58,237,0.15)" }}
+                  onClick={() => {
+                    setHasChanges(true);
+                    onEditTeam?.(team);
+                  }}
                 >
-                  <div className="h-9 w-9 rounded-xl flex items-center justify-center shrink-0 text-white text-xs font-bold" style={{ background: isOut ? "rgba(100,100,100,0.4)" : avatarColors[idx % avatarColors.length] }}>
-                    {isOut ? "✕" : initials(team.name)}
+                  <div className="h-9 w-9 rounded-xl flex items-center justify-center shrink-0 text-white text-xs font-bold"
+                    style={{ background: avatarColors[idx % avatarColors.length] }}>
+                    {initials(team.name)}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold truncate" style={isOut ? { color: "rgba(239,68,68,0.6)", textDecoration: "line-through" } : { color: "white" }}>{team.name}</p>
-                    {!isOut && team.players && team.players.length > 0 && (
+                    <p className="text-sm font-semibold truncate text-white">{team.name}</p>
+                    {team.players && team.players.length > 0 && (
                       <p className="text-xs truncate" style={{ color:"rgba(196,181,253,0.45)" }}>{team.players.join(", ")}</p>
                     )}
-                    {isOut && <p className="text-[10px] font-bold" style={{ color: "rgba(239,68,68,0.5)" }}>OUT — tap to restore</p>}
                   </div>
-                  {!isOut && team.slot && <span className="text-xs font-bold shrink-0" style={{ color:"rgba(139,92,246,0.7)" }}>#{team.slot}</span>}
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0" style={isOut ? { background:"rgba(239,68,68,0.15)", color:"#f87171" } : { background:"rgba(34,197,94,0.12)", color:"#4ade80" }}>
-                    {isOut ? "OUT" : "IN"}
-                  </span>
+                  {team.slot && <span className="text-xs font-bold shrink-0" style={{ color:"rgba(139,92,246,0.7)" }}>#{team.slot}</span>}
+                  {/* Paid / Unpaid badge — tappable, separate from IN/OUT */}
+                  {!isCloneMode && (
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setHasChanges(true);
+                        save({ ...tournament, teams: tournament.teams.map(t => t.id === team.id ? { ...t, paid: !t.paid } : t) });
+                      }}
+                      className="text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 cursor-pointer press-scale"
+                      style={team.paid
+                        ? { background: "rgba(37,211,102,0.15)", color: "#4ade80", border: "1px solid rgba(37,211,102,0.3)" }
+                        : { background: "rgba(255,255,255,0.06)", color: "rgba(196,181,253,0.35)", border: "1px solid rgba(255,255,255,0.08)" }}
+                    >
+                      {team.paid ? "Paid" : "Unpaid"}
+                    </span>
+                  )}
+                  {/* IN/OUT toggle switch */}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); toggleOut(); }}
+                    className="relative shrink-0 press-scale"
+                    style={{ width: 44, height: 26 }}
+                    aria-label={isOut ? "Mark IN" : "Mark OUT"}
+                  >
+                    <div className="absolute inset-0 rounded-full transition-colors duration-200"
+                      style={{ background: isOut ? "rgba(239,68,68,0.5)" : "rgba(34,197,94,0.5)" }} />
+                    <div className="absolute top-1 transition-transform duration-200 h-[18px] w-[18px] rounded-full bg-white shadow"
+                      style={{ left: 4, transform: isOut ? "translateX(0)" : "translateX(18px)" }} />
+                  </button>
                 </div>
               );
             })}
@@ -288,25 +326,39 @@ export default function AddTeamsScreen({
         {addScreenMode === "create" && (
           <p className="text-xs text-center mb-3" style={{ color:"rgba(196,181,253,0.35)" }}>Click here to create a tournament with all your teams</p>
         )}
-        {clonedFromId === tournament.id ? (
+        {isCloneMode ? (
           <div className="flex gap-3">
             <button
-              onClick={() => { handleDeleteTournament(tournament.id); setClonedFromId(null); setShowAddScreen(false); setShowCreate(true); }}
+              onClick={() => {
+                if (isPendingClone && onCancelClone) {
+                  onCancelClone();
+                } else {
+                  handleDeleteTournament(tournament.id); setClonedFromId(null); setShowAddScreen(false); setShowCreate(true);
+                }
+              }}
               className="flex-1 py-4 rounded-2xl font-bold text-sm press-scale"
               style={{ background: "rgba(255,255,255,0.06)", color: "rgba(196,181,253,0.6)", border: "1px solid rgba(255,255,255,0.08)" }}
             >Cancel</button>
             <button
-              onClick={() => { setClonedFromId(null); setExcludedCloneTeams(() => new Set()); setShowAddScreen(false); toast.success(`"${tournament.name}" created!`); setAddScreenSnapshot(null); }}
+              onClick={() => {
+                if (isPendingClone && onConfirmClone) {
+                  // Pass the set of booked IDs — all teams are cloned, this just sets their out status
+                  const bookedIds = new Set(teams.filter(t => !excludedCloneTeams.has(t.id)).map(t => t.id));
+                  onConfirmClone(bookedIds);
+                } else {
+                  setClonedFromId(null); setExcludedCloneTeams(() => new Set()); setShowAddScreen(false); toast.success(`"${tournament.name}" created!`); setAddScreenSnapshot(null);
+                }
+              }}
               className="flex-1 py-4 rounded-2xl font-bold text-white text-sm flex items-center justify-center gap-2 press-scale"
               style={{ background: "linear-gradient(135deg,#7c3aed,#a855f7)", boxShadow: "0 4px 28px rgba(124,58,237,0.5)" }}
             >
-              <Trophy className="h-4 w-4" /> Clone{excludedCloneTeams.size > 0 ? ` (${teams.length - excludedCloneTeams.size} teams)` : ""}
+              <Trophy className="h-4 w-4" /> Clone
             </button>
           </div>
         ) : (
           <button
             onClick={() => { setShowAddScreen(false); toast.success(`Tournament "${tournament.name}" ${addScreenMode === "edit" ? "updated" : "ready"}!`); setAddScreenSnapshot(null); }}
-            disabled={addScreenMode === "edit" && addScreenSnapshot !== null && teams.length === addScreenSnapshot.teamCount}
+            disabled={addScreenMode === "edit" && !hasChanges}
             className="w-full py-4 rounded-2xl font-bold text-white text-sm flex items-center justify-center gap-2 press-scale disabled:opacity-40 disabled:cursor-not-allowed"
             style={{ background:"linear-gradient(135deg,#7c3aed,#a855f7)", boxShadow:"0 4px 28px rgba(124,58,237,0.5)" }}
           >

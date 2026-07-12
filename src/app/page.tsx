@@ -14,6 +14,9 @@ import { toast } from "sonner";
 import { Team, Tournament, StandingRow, GeminiOutput, AssignedGroup, PointSystem, DEFAULT_BGMI_POINTS } from "@/lib/types";
 import CreateScreen from "./components/CreateScreen";
 import BookingsModal from "./components/BookingsModal";
+import ShareCodeModal from "./components/ShareCodeModal";
+import ImportCodeModal from "./components/ImportCodeModal";
+import CollabDeleteConfirm from "./components/CollabDeleteConfirm";
 import TeamEditScreen from "./components/TeamEditScreen";
 import PointSystemModal from "./components/PointSystemModal";
 import EditSheet from "./components/EditSheet";
@@ -85,6 +88,7 @@ export default function TeamsPage() {
   const [roundRobin, setRoundRobin] = useState(false);
   const [clonedFromId, setClonedFromId] = useState<string | null>(null);
   const [excludedCloneTeams, setExcludedCloneTeams] = useState<Set<string>>(new Set());
+  const [pendingCloneDraft, setPendingCloneDraft] = useState<import("@/lib/types").Tournament | null>(null);
   const [showMore, setShowMore] = useState(false);
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
   const toggleCard = (id: string) => setExpandedCards((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -504,26 +508,27 @@ export default function TeamsPage() {
   };
 
   const handleCloneCreate = (source: Tournament) => {
-    // Generate unique name: "Name (Copy)" → "Name (Copy-2)" → "Name (Copy-3)"
+    // Build a unique name but do NOT save anything yet — draft lives in memory only
     const existingNames = new Set(tournaments.map(t => t.name));
-    const baseName = source.name.replace(/ \(Copy(?:-\d+)?\)$/, ""); // strip any existing (Copy-N)
+    const baseName = source.name.replace(/ \(Copy(?:-\d+)?\)$/, "");
     let copyName = `${baseName} (Copy)`;
     let n = 2;
     while (existingNames.has(copyName)) { copyName = `${baseName} (Copy-${n++})`; }
 
-    const t: Tournament = {
+    const draft: Tournament = {
       ...createTournament(copyName),
       teams: source.teams.map((tm) => ({ ...tm, id: crypto.randomUUID() })),
       pointSystem: source.pointSystem,
     };
-    setTournaments((prev) => { const u = [...prev, t]; saveTournaments(u); return u; });
-    setTournament(t);
+
+    // Store draft in memory — will only be saved if user confirms
+    setPendingCloneDraft(draft);
+    // Start ALL teams as OUT (not booked) — user marks each one IN before cloning
+    setExcludedCloneTeams(new Set(draft.teams.map(t => t.id)));
     setShowCreate(false);
-    setAddForm({ name: "", slot: String(t.teams.length + 1), tags: "", phone: "" });
+    setAddForm({ name: "", slot: String(draft.teams.length + 1), tags: "", phone: "" });
     setAddScreenTab("entered"); setAddScreenMode("create"); setShowAddScreen(true);
-    setClonedFromId(t.id);
-    setAddScreenSnapshot({ teamCount: t.teams.length, entryFee: t.entryFee ?? 0, isActive: t.isActive ?? false });
-    toast.success(`Cloned "${source.name}" — review below`);
+    setAddScreenSnapshot({ teamCount: draft.teams.length, entryFee: draft.entryFee ?? 0, isActive: draft.isActive ?? false });
   };
 
   // Deduplicate player names case-insensitively, preserving first occurrence
@@ -559,6 +564,7 @@ export default function TeamsPage() {
       players: players.length > 0 ? uniquePlayers(players) : undefined,
       phone: phoneDigits,
       paid: true,
+      out: false, // always IN when manually added
     };
     const updated = { ...tournament, teams: [...tournament.teams, newTeam] };
     save(updated);
@@ -969,7 +975,7 @@ export default function TeamsPage() {
   };
   const toggleExpand = (g: string) => setExpandedGroups((p) => { const n = new Set(p); n.has(g) ? n.delete(g) : n.add(g); return n; });
   const assignedTeamIds = new Set(Object.values(assignments));
-  const slotAssignments = tournament?.teams.map((t, i) => ({ ...t, slot: startSlot + i })) || [];
+  const slotAssignments = tournament?.teams.filter(t => !t.out).map((t, i) => ({ ...t, slot: startSlot + i })) || [];
 
 
   const captureRef = useCallback(async (ref: React.RefObject<HTMLDivElement | null>, download = false, filename = "image") => {
@@ -1226,9 +1232,9 @@ export default function TeamsPage() {
         />
       )}
       {/* ADD TEAMS SCREEN */}
-      {showAddScreen && tournament && (
+      {showAddScreen && (tournament || pendingCloneDraft) && (
         <AddTeamsScreen
-          tournament={tournament}
+          tournament={pendingCloneDraft ?? tournament!}
           addScreenTab={addScreenTab}
           setAddScreenTab={setAddScreenTab}
           addScreenMode={addScreenMode}
@@ -1252,6 +1258,37 @@ export default function TeamsPage() {
           setShowAddScreen={setShowAddScreen}
           setShowCreate={setShowCreate}
           setAddScreenSnapshot={setAddScreenSnapshot}
+          isPendingClone={pendingCloneDraft !== null}
+          onConfirmClone={(bookedTeamIds) => {
+            // Clone ALL teams — set out:true for those not booked, out:false for booked ones
+            const final = {
+              ...pendingCloneDraft!,
+              teams: pendingCloneDraft!.teams.map(t => ({ ...t, out: !bookedTeamIds.has(t.id) }))
+            };
+            setTournaments((prev) => { const u = [...prev, final]; saveTournaments(u); return u; });
+            setTournament(final);
+            setPendingCloneDraft(null);
+            setExcludedCloneTeams(new Set());
+            setShowAddScreen(false);
+            setAddScreenSnapshot(null);
+            toast.success(`"${final.name}" created!`);
+          }}
+          onCancelClone={() => {
+            setPendingCloneDraft(null);
+            setExcludedCloneTeams(new Set());
+            setShowAddScreen(false);
+            setShowCreate(true);
+          }}
+          onEditTeam={(team) => {
+            setEditingTeam(team);
+            setEditTeamForm({
+              name: team.name,
+              slot: team.slot ? String(team.slot) : "",
+              tags: "",
+              players: (team.players ?? []).join(", "),
+              phone: team.phone ?? "",
+            });
+          }}
         />
       )}
 
@@ -1297,7 +1334,7 @@ export default function TeamsPage() {
           onEditTeams={() => {
             setAddForm({ name: "", slot: String((tournament?.teams.length ?? 0) + 1), tags: "", phone: "" });
             setPlayerInputs([""]);
-            setAddScreenTab("add");
+            setAddScreenTab("entered"); // open on Entered so user sees all teams + can toggle booked/not
             setAddScreenMode("edit");
             setInitialTeamCount(tournament?.teams.length ?? 0);
             setAddScreenSnapshot({ teamCount: tournament?.teams.length ?? 0, entryFee: tournament?.entryFee ?? 0, isActive: tournament?.isActive ?? false });
@@ -1626,104 +1663,27 @@ export default function TeamsPage() {
       })()}
       {/* SHARE CODE MODAL */}
       {showShareModal && shareInfo && (
-        <div className="fixed inset-0 z-[70] flex items-end justify-center p-4" style={{ background: "rgba(0,0,0,0.7)" }} onClick={() => setShowShareModal(false)}>
-          <div className="w-full max-w-sm rounded-3xl p-6 anim-slide-up" style={{ background: "#13092b", border: "1px solid rgba(124,58,237,0.3)" }} onClick={(e) => e.stopPropagation()}>
-            <p className="text-xs font-bold tracking-widest text-center mb-1" style={{ color: "rgba(167,139,250,0.6)" }}>SHARE TOURNAMENT</p>
-            <p className="text-white font-bold text-center mb-5 truncate">{shareInfo.name}</p>
-
-            {/* Big code display */}
-            <div className="rounded-2xl p-5 mb-4 text-center" style={{ background: "rgba(124,58,237,0.12)", border: "1px solid rgba(124,58,237,0.3)" }}>
-              <p className="text-xs mb-2" style={{ color: "rgba(196,181,253,0.5)" }}>Share code</p>
-              <p className="text-4xl font-black tracking-[0.25em] text-white" style={{ fontFamily: "monospace" }}>{shareInfo.code}</p>
-              <p className="text-[10px] mt-2" style={{ color: "rgba(196,181,253,0.4)" }}>Others can enter this code to import</p>
-            </div>
-
-            <div className="flex gap-2">
-              <button
-                onClick={() => { navigator.clipboard.writeText(shareInfo.code); toast.success("Code copied!"); }}
-                className="flex-1 py-3 rounded-xl font-bold text-sm press-scale"
-                style={{ background: "rgba(124,58,237,0.2)", color: "#c4b5fd", border: "1px solid rgba(124,58,237,0.3)" }}
-              >
-                Copy code
-              </button>
-              <button
-                onClick={() => {
-                  if (navigator.share) {
-                    navigator.share({ title: shareInfo.name, text: `Use code ${shareInfo.code} to import my tournament!`, url: shareInfo.url }).catch(() => {});
-                  } else {
-                    navigator.clipboard.writeText(shareInfo.url);
-                    toast.success("Link copied!");
-                  }
-                }}
-                className="flex-1 py-3 rounded-xl font-bold text-sm text-white press-scale"
-                style={{ background: "linear-gradient(135deg,#7c3aed,#9333ea)" }}
-              >
-                Share link
-              </button>
-            </div>
-            <button onClick={() => setShowShareModal(false)} className="w-full mt-3 py-2.5 rounded-xl text-sm font-medium" style={{ color: "rgba(196,181,253,0.4)" }}>Close</button>
-          </div>
-        </div>
+        <ShareCodeModal shareInfo={shareInfo} onClose={() => setShowShareModal(false)} />
       )}
 
       {/* IMPORT BY CODE MODAL */}
       {showImportCode && (
-        <div className="fixed inset-0 z-[70] flex items-end justify-center p-4" style={{ background: "rgba(0,0,0,0.7)" }} onClick={() => setShowImportCode(false)}>
-          <div className="w-full max-w-sm rounded-3xl p-6 anim-slide-up" style={{ background: "#13092b", border: "1px solid rgba(124,58,237,0.3)" }} onClick={(e) => e.stopPropagation()}>
-            <p className="text-xs font-bold tracking-widest text-center mb-1" style={{ color: "rgba(167,139,250,0.6)" }}>IMPORT TOURNAMENT</p>
-            <p className="text-sm text-center mb-5" style={{ color: "rgba(196,181,253,0.5)" }}>Enter the 6-character code</p>
-
-            <input
-              type="text"
-              value={importCode}
-              onChange={(e) => setImportCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6))}
-              placeholder="ABC123"
-              maxLength={6}
-              autoFocus
-              className="w-full text-center text-3xl font-black tracking-[0.3em] py-4 rounded-2xl mb-4 bg-transparent focus:outline-none"
-              style={{ background: "rgba(124,58,237,0.1)", border: "1px solid rgba(124,58,237,0.3)", color: "white", caretColor: "#a78bfa", fontFamily: "monospace" }}
-              onKeyDown={(e) => { if (e.key === "Enter" && importCode.length === 6) handleImportByCode(); }}
-            />
-
-            <button
-              onClick={handleImportByCode}
-              disabled={importCode.length !== 6 || importLoading}
-              className="w-full py-3.5 rounded-xl font-bold text-sm text-white press-scale disabled:opacity-40"
-              style={{ background: "linear-gradient(135deg,#7c3aed,#9333ea)" }}
-            >
-              {importLoading ? "Importing…" : "Import"}
-            </button>
-            <button onClick={() => { setShowImportCode(false); setImportCode(""); }} className="w-full mt-3 py-2.5 rounded-xl text-sm font-medium" style={{ color: "rgba(196,181,253,0.4)" }}>Cancel</button>
-          </div>
-        </div>
+        <ImportCodeModal
+          importCode={importCode}
+          setImportCode={setImportCode}
+          importLoading={importLoading}
+          onImport={handleImportByCode}
+          onClose={() => setShowImportCode(false)}
+        />
       )}
 
       {/* COLLAB LOCAL DELETE CONFIRM */}
       {collabDeleteId && (
-        <div className="fixed inset-0 z-[80] flex items-end justify-center p-4" style={{ background: "rgba(0,0,0,0.7)" }} onClick={() => setCollabDeleteId(null)}>
-          <div className="w-full max-w-sm rounded-3xl p-6 anim-slide-up" style={{ background: "#13092b", border: "1px solid rgba(239,68,68,0.25)" }} onClick={(e) => e.stopPropagation()}>
-            <div className="flex flex-col items-center gap-2 mb-4">
-              <div className="h-11 w-11 rounded-2xl flex items-center justify-center" style={{ background: "rgba(239,68,68,0.12)" }}>
-                <Trash2 className="h-5 w-5" style={{ color: "#f87171" }} />
-              </div>
-              <p className="text-base font-bold text-white">Remove shared tournament?</p>
-            </div>
-            <p className="text-sm text-center mb-5" style={{ color: "rgba(196,181,253,0.5)" }}>
-              This will only delete it <span className="text-white font-semibold">for you</span>. The original tournament won&apos;t be affected.
-            </p>
-            <button
-              onClick={() => {
-                handleDeleteTournament(collabDeleteId);
-                setCollabDeleteId(null);
-              }}
-              className="w-full py-3.5 rounded-xl font-bold text-sm text-white press-scale mb-2"
-              style={{ background: "rgba(239,68,68,0.2)", border: "1px solid rgba(239,68,68,0.3)", color: "#f87171" }}
-            >
-              Delete for me
-            </button>
-            <button onClick={() => setCollabDeleteId(null)} className="w-full py-2.5 rounded-xl text-sm font-medium" style={{ color: "rgba(196,181,253,0.4)" }}>Keep it</button>
-          </div>
-        </div>
+        <CollabDeleteConfirm
+          tournamentId={collabDeleteId}
+          onConfirm={handleDeleteTournament}
+          onCancel={() => setCollabDeleteId(null)}
+        />
       )}
 
       {/* ROOM INFO — WhatsApp group invite */}
