@@ -324,7 +324,15 @@ export default function TeamsPage() {
             const localNewer = (l.updatedAt ?? "") >= (r.updatedAt ?? "");
             const base = localNewer ? l : r;
             const other = localNewer ? r : l;
-            ownedMerged.push({ ...base, teams: mergeTeams(base.teams ?? [], other.teams ?? []) });
+            ownedMerged.push({
+              ...base,
+              teams: mergeTeams(base.teams ?? [], other.teams ?? []),
+              // Admin-intent fields: always prefer the LOCAL value so user
+              // changes (toggle booking on/off, entry fee edits) are never
+              // silently reverted by a stale remote copy.
+              isActive:  l.isActive  ?? r.isActive,
+              entryFee:  l.entryFee  ?? r.entryFee,
+            });
           });
           if (ownedMerged.length > 0) {
             const pushRes = await fetch("/api/tournaments", {
@@ -393,6 +401,12 @@ export default function TeamsPage() {
       });
       saveTournaments(ultimateMerged);
       setTournaments(ultimateMerged);
+      // Also refresh the active tournament if it's currently open,
+      // so isActive / other fields don't appear stale in open screens
+      setTournament(prev => {
+        if (!prev) return prev;
+        return ultimateMerged.find(t => t.id === prev.id) ?? prev;
+      });
 
       if (syncStatus !== 'unauthed') setSyncStatus('synced');
       if (showToast) toast.success(`Synced ☁️`);
