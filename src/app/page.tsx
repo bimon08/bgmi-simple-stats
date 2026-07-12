@@ -107,11 +107,13 @@ export default function TeamsPage() {
   const [rulesText, setRulesText] = useState("");
   const [tournamentTab, setTournamentTab] = useState<'mine' | 'shared'>('mine');
   const [collabDeleteId, setCollabDeleteId] = useState<string | null>(null);
+  const [pageLoaded, setPageLoaded] = useState(false);
 
   // Load local immediately, then silently pull + merge from DB on mount
   useEffect(() => {
     const local = loadTournaments();
     setTournaments(local);
+    setPageLoaded(true);
     fetch("/api/tournaments")
       .then((r) => r.ok ? r.json() : null)
       .then((json) => {
@@ -1027,6 +1029,21 @@ export default function TeamsPage() {
             );
             return null;
           })()}
+          {/* Skeleton — shown until local storage is read */}
+          {!pageLoaded && (
+            <div className="space-y-3">
+              {[1,2,3].map(i => (
+                <div key={i} className="rounded-2xl p-4 flex items-center gap-3" style={{ background: "#150e25", border: "1px solid rgba(124,58,237,0.12)" }}>
+                  <div className="h-9 w-9 rounded-xl shrink-0 skeleton-pulse" />
+                  <div className="flex-1 space-y-2">
+                    <div className="h-3.5 rounded-lg skeleton-pulse" style={{ width: `${55 + i * 12}%` }} />
+                    <div className="h-2.5 rounded-lg skeleton-pulse" style={{ width: "35%" }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
 
           <div className="space-y-3">
             {tournaments.filter(t => tournamentTab === 'shared' ? isCollab(t) : !isCollab(t)).map((t, i) => {

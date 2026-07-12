@@ -130,3 +130,19 @@ button, a { -webkit-tap-highlight-color: transparent; }
   border: none;
   box-shadow: 0 0 6px rgba(177,106,240,0.6);
 }
+
+/* ── Skeleton shimmer ─────────────────────────────────────────────── */
+@keyframes skeleton-shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position:  400px 0; }
+}
+.skeleton-pulse {
+  background: linear-gradient(
+    90deg,
+    rgba(124,58,237,0.10) 25%,
+    rgba(167,139,250,0.18) 50%,
+    rgba(124,58,237,0.10) 75%
+  );
+  background-size: 800px 100%;
+  animation: skeleton-shimmer 1.6s ease-in-out infinite;
+}
