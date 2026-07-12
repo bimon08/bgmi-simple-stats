@@ -371,20 +371,55 @@ export default function TeamsPage() {
   };
 
   const parseTeamPaste = (text: string): { teamName: string; players: string[] } | null => {
-    const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
-    if (lines.length < 2) return null; // single line — normal paste
+    // Normalise: split on newlines, strip surrounding whitespace, drop empties
+    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    if (lines.length < 2) return null; // single line — let normal paste happen
+
+    // Strip any leading number/bullet prefix from a player line
+    // Handles: "1 Name", "1. Name", "1) Name", "1- Name", "(1) Name", "[1] Name", "#1 Name", "1.Name"
+    const stripNumber = (s: string) =>
+      s.replace(/^(?:\(?\[?#?\d+[\.\)\]\-]?\)?\s*)/u, '').trim();
+
+    // Returns true if a line looks like a section header to skip
+    const isHeaderLine = (s: string) =>
+      /^[Pp]layers?\s*[:：\-]?\s*$/.test(s) ||
+      /^[Rr]oster\s*[:：]?\s*$/.test(s) ||
+      /^[Mm]embers?\s*[:：]?\s*$/.test(s) ||
+      /^[Ss]quad\s*[:：]?\s*$/.test(s);
+
+    // Returns true if line is ONLY a number (e.g. "1" as a standalone line)
+    const isPureNumber = (s: string) => /^\d+$/.test(s);
+
     let teamName = '';
-    const players: string[] = [];
-    for (const line of lines) {
-      // "Team TSMent" or "team eklnp"
-      const teamMatch = line.match(/^[Tt]eam\s+(.+)$/);
-      if (teamMatch) { teamName = teamMatch[1].trim(); continue; }
-      // "Players 1 Name" or "1 Name" or "1Name" (numbered format)
-      const numberedMatch = line.match(/^(?:[Pp]layers?\s+)?(\d+)\s*(.+)$/);
-      if (numberedMatch) { players.push(numberedMatch[2].trim()); continue; }
-      // Plain line — just a player name with no number prefix
-      players.push(line);
+    const playerLines: string[] = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      // Explicit "Team …" / "Name …" / "Squad …" / "Clan …" label
+      const explicitTeam = line.match(
+        /^(?:[Tt]eam|[Nn]ame|[Ss]quad|[Cc]lan)\s*[:：\-]?\s*(.+)$/
+      );
+      if (explicitTeam) { teamName = explicitTeam[1].trim(); continue; }
+
+      // Section header lines — skip entirely
+      if (isHeaderLine(line)) continue;
+
+      // Pure standalone number — skip
+      if (isPureNumber(line)) continue;
+
+      // First meaningful line with no prefix → team name
+      if (!teamName && playerLines.length === 0) {
+        teamName = line;
+        continue;
+      }
+
+      // Everything else is a player — strip leading number prefix
+      const player = stripNumber(line);
+      if (player) playerLines.push(player);
     }
+
+    const players = [...new Set(playerLines)]; // deduplicate
     if (!teamName && !players.length) return null;
     return { teamName, players };
   };
