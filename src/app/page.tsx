@@ -466,46 +466,48 @@ export default function TeamsPage() {
     let captain = '';
     const players: string[] = [];
     let labeledHits = 0;
+    let hasStructuredLabel = false; // only true when Leader Name / Player N / Leader's phone is found
 
     for (const line of lines) {
       // Team Name <value>  /  Team: <value>  /  Squad <value>
       const mTeam = line.match(/^(?:[Tt]eam\s+[Nn]ame|[Tt]eam|[Ss]quad|[Cc]lan)\s*[:：\-]?\s+(.+)$/u);
       if (mTeam) { teamName = mTeam[1].trim(); labeledHits++; continue; }
 
-      // Leader Name / Leader's Name / Captain Name
+      // Leader Name / Leader's Name / Captain Name  ← structured
       const mLeader = line.match(/^[Ll]eader['s\u2019]*\s+[Nn]ame\s+(.+)$/u);
       if (mLeader) {
         const alts = splitOrAlts(mLeader[1].trim());
-        captain = alts[0]; // first alternative = primary leader
-        // remaining alts are extra players
+        captain = alts[0];
         alts.slice(1).forEach(p => { if (!isPhone(p)) players.push(p); });
-        labeledHits++; continue;
+        labeledHits++; hasStructuredLabel = true; continue;
       }
 
-      // Leader's phone number / Leader phone / Phone number
+      // Leader's phone number / Leader phone / Phone number  ← structured if labelled
       const mPhone = line.match(
         /^(?:[Ll]eader(?:[''\u2019]s?|s)?\s+)?[Pp]hone(?:\s+[Nn]umber)?\s+(.+)$/u
       );
       if (mPhone && isPhone(mPhone[1].trim())) {
-        phone = normalizePhone(mPhone[1].trim()); labeledHits++; continue; }
+        phone = normalizePhone(mPhone[1].trim());
+        labeledHits++; hasStructuredLabel = true; continue;
+      }
 
-      // Player <N?> <value>  /  Players <value>
+      // Player <N?> <value>  /  Players <value>  ← structured
       const mPlayer = line.match(/^[Pp]layers?\s+(?:\d+\s+)?(.+)$/u);
       if (mPlayer) {
         splitOrAlts(mPlayer[1].trim())
           .filter(p => !isPhone(p))
-          .forEach(p => { players.push(p); labeledHits++; });
+          .forEach(p => { players.push(p); labeledHits++; hasStructuredLabel = true; });
         continue;
       }
 
-      // Bare phone line (e.g. "+91 8729811863" on its own)
+      // Bare phone line — counts as a hit but NOT a structured label
       if (!phone && isPhone(line)) {
         phone = normalizePhone(line); labeledHits++;
       }
     }
 
-    // If we found structured labels, use label-mode result
-    if (labeledHits >= 2) {
+    // Only use labeled mode when we found at least one explicit structural keyword
+    if (labeledHits >= 2 && hasStructuredLabel) {
       // Combine captain + players (captain first, deduplicated)
       const allPlayers = captain
         ? [captain, ...players.filter(p => p !== captain)]
