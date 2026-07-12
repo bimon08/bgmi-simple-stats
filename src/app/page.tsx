@@ -34,6 +34,34 @@ function Pill({ label, icon, onPress, active = false, variant = "default" }: {
   return <button onClick={onPress} className={base} style={{ border: `1px solid ${active ? "rgba(139,92,246,0.9)" : "rgba(139,92,246,0.35)"}`, background: active ? "rgba(124,58,237,0.3)" : "transparent", color: active ? "#c4b5fd" : "rgba(196,181,253,0.65)" }}>{icon}{label}</button>;
 }
 
+/** Merge two team arrays by ID with field-level conflict resolution.
+ *  When the same team exists on both sides, the non-empty value wins for
+ *  optional fields (phone, players) so collaborator additions are preserved. */
+function mergeTeams(local: Team[], remote: Team[]): Team[] {
+  const localMap  = new Map(local.map(t => [t.id, t]));
+  const remoteMap = new Map(remote.map(t => [t.id, t]));
+  const allIds    = new Set([...localMap.keys(), ...remoteMap.keys()]);
+  const result: Team[] = [];
+  allIds.forEach(id => {
+    const l = localMap.get(id);
+    const r = remoteMap.get(id);
+    if (!l) { result.push(r!); return; }
+    if (!r) { result.push(l);  return; }
+    // Both sides have the team — merge at field level
+    result.push({
+      ...r,             // remote as base (DB ground truth)
+      ...l,             // local scalar fields override
+      // Optional fields: take whichever side is non-empty
+      phone: l.phone || r.phone || undefined,
+      // Players: take whichever side has more (or local if equal)
+      players: (l.players?.length ?? 0) >= (r.players?.length ?? 0)
+        ? (l.players ?? [])
+        : (r.players ?? []),
+    });
+  });
+  return result;
+}
+
 function QuickBtn({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) {
   return (
     <button onClick={onClick} className="flex flex-col items-center gap-2">
@@ -130,7 +158,9 @@ export default function TeamsPage() {
           if (!r) { merged.push(l);  return; }
           const lTs = l.updatedAt ?? l.createdAt ?? "";
           const rTs = r.updatedAt ?? r.createdAt ?? "";
-          merged.push(lTs >= rTs ? l : r);
+          const base  = lTs >= rTs ? l : r;
+          const other = lTs >= rTs ? r : l;
+          merged.push({ ...base, teams: mergeTeams(base.teams ?? [], other.teams ?? []) });
         });
         saveTournaments(merged);
         setTournaments(merged);
@@ -294,12 +324,7 @@ export default function TeamsPage() {
             const localNewer = (l.updatedAt ?? "") >= (r.updatedAt ?? "");
             const base = localNewer ? l : r;
             const other = localNewer ? r : l;
-            const baseTeamMap  = new Map((base.teams  ?? []).map(t => [t.id, t]));
-            const otherTeamMap = new Map((other.teams ?? []).map(t => [t.id, t]));
-            const allTeamIds = new Set([...baseTeamMap.keys(), ...otherTeamMap.keys()]);
-            const mergedTeams: Team[] = [];
-            allTeamIds.forEach(tid => { mergedTeams.push(baseTeamMap.get(tid) ?? otherTeamMap.get(tid)!); });
-            ownedMerged.push({ ...base, teams: mergedTeams });
+            ownedMerged.push({ ...base, teams: mergeTeams(base.teams ?? [], other.teams ?? []) });
           });
           if (ownedMerged.length > 0) {
             const pushRes = await fetch("/api/tournaments", {
@@ -322,12 +347,7 @@ export default function TeamsPage() {
           if (!sRes.ok) { sharedMerged.push(st); continue; } // code gone? keep local
           const { tournament: remote } = await sRes.json() as { tournament: Tournament };
           // Merge teams (incoming local wins for its teams, remote fills gaps)
-          const localTeamMap  = new Map((st.teams     ?? []).map(t => [t.id, t]));
-          const remoteTeamMap = new Map((remote.teams ?? []).map(t => [t.id, t]));
-          const allTeamIds = new Set([...localTeamMap.keys(), ...remoteTeamMap.keys()]);
-          const mergedTeams: Team[] = [];
-          allTeamIds.forEach(tid => { mergedTeams.push(localTeamMap.get(tid) ?? remoteTeamMap.get(tid)!); });
-          const merged: Tournament = { ...remote, sharedFrom: code, teams: mergedTeams };
+          const merged: Tournament = { ...remote, sharedFrom: code, teams: mergeTeams(st.teams ?? [], remote.teams ?? []) };
           // Push merged back to owner's DB
           await fetch(`/api/share/${code}`, {
             method: "PUT", headers: { "Content-Type": "application/json" },
