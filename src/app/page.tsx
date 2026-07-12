@@ -1051,7 +1051,7 @@ export default function TeamsPage() {
                         <p className="text-xs" style={{ color: "rgba(167,139,250,0.5)" }}>Teams: {t.teams.length}</p>
                         {t.updatedAt && (
                           <span className="text-[10px]" style={{ color: "rgba(167,139,250,0.3)" }}>
-                            · {new Date(t.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                            · {new Date(t.updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true })}
                           </span>
                         )}
                       </div>
