@@ -114,7 +114,38 @@ function WalletInner() {
   };
 
   const filtered = wallets
-    .filter((w) => w.playerName.toLowerCase().includes(search.toLowerCase()))
+    .filter((w) => {
+      const q = search.trim();
+      if (!q) return true;
+
+      const nameLower = w.playerName.toLowerCase();
+      const phoneDigits = (w.phone ?? "").replace(/\D/g, ""); // strip non-digits from stored phone
+      const qDigits = q.replace(/\D/g, ""); // strip non-digits from query
+
+      // 1. Phone search: if query is all digits (possibly with +/-/ spaces), match against phone digits
+      if (qDigits && /^[\d\s\+\-\(\)]+$/.test(q)) {
+        // Exact prefix or suffix match on phone digits (e.g. "9876" matches "9876543210" or ending "43210")
+        return phoneDigits.startsWith(qDigits) ||
+               phoneDigits.endsWith(qDigits) ||
+               phoneDigits.includes(qDigits);
+      }
+
+      // 2. Mixed query (e.g. "+91 sorry") — try phone part + name part separately
+      const qLower = q.toLowerCase();
+
+      // 3. Fuzzy name: every word in query must appear (as substring) in the name
+      const words = qLower.split(/\s+/).filter(Boolean);
+      const fuzzyMatch = words.every(word => nameLower.includes(word));
+      if (fuzzyMatch) return true;
+
+      // 4. Full query as substring of name (handles single-word partial)
+      if (nameLower.includes(qLower)) return true;
+
+      // 5. Phone digits contained in wallet phone (for mixed queries strip non-digits from query)
+      if (qDigits.length >= 3 && phoneDigits.includes(qDigits)) return true;
+
+      return false;
+    })
     .sort((a, b) => {
       if (sort === "debt") return a.balance - b.balance;
       if (sort === "credit") return b.balance - a.balance;
