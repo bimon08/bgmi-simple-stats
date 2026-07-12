@@ -77,6 +77,7 @@ export default function TeamsPage() {
   type SyncStatus = 'idle' | 'pending' | 'syncing' | 'offline' | 'synced' | 'unauthed';
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
   const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const [showSyncPicker, setShowSyncPicker] = useState(false);
   const [syncPickerTarget, setSyncPickerTarget] = useState<number>(0); // which row we're picking for
   const [startSlot, setStartSlot] = useState(3);
@@ -141,6 +142,17 @@ export default function TeamsPage() {
     const onOnline = () => { if (syncStatus === 'offline') scheduleSyncDebounce(); };
     window.addEventListener('online', onOnline);
     return () => window.removeEventListener('online', onOnline);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncStatus]);
+
+  // Poll every 30s to pick up changes from collaborators
+  useEffect(() => {
+    pollTimer.current = setInterval(() => {
+      if (navigator.onLine && (syncStatus === 'synced' || syncStatus === 'idle')) {
+        doSync(false);
+      }
+    }, 30_000);
+    return () => { if (pollTimer.current) clearInterval(pollTimer.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [syncStatus]);
 
@@ -268,7 +280,20 @@ export default function TeamsPage() {
         const r = remoteMap.get(id);
         if (!l) { merged.push(r!); return; }
         if (!r) { merged.push(l);  return; }
-        merged.push((l.updatedAt ?? "") >= (r.updatedAt ?? "") ? l : r);
+        // Team-level merge: union teams from both sides by ID
+        // Scalar fields: winner is the side with newer updatedAt
+        const localNewer = (l.updatedAt ?? "") >= (r.updatedAt ?? "");
+        const base = localNewer ? l : r;
+        const other = localNewer ? r : l;
+        const baseTeamMap  = new Map((base.teams  ?? []).map(t => [t.id, t]));
+        const otherTeamMap = new Map((other.teams ?? []).map(t => [t.id, t]));
+        const allTeamIds = new Set([...baseTeamMap.keys(), ...otherTeamMap.keys()]);
+        const mergedTeams: Team[] = [];
+        allTeamIds.forEach(tid => {
+          // Prefer base version if available (newer); add from other side if missing
+          mergedTeams.push(baseTeamMap.get(tid) ?? otherTeamMap.get(tid)!);
+        });
+        merged.push({ ...base, teams: mergedTeams });
       });
       const pushRes = await fetch("/api/tournaments", {
         method: "PUT", headers: { "Content-Type": "application/json" },
