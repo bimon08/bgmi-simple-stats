@@ -325,7 +325,7 @@ export default function TeamsPage() {
           const allTeamIds = new Set([...localTeamMap.keys(), ...remoteTeamMap.keys()]);
           const mergedTeams: Team[] = [];
           allTeamIds.forEach(tid => { mergedTeams.push(localTeamMap.get(tid) ?? remoteTeamMap.get(tid)!); });
-          const merged: Tournament = { ...remote, sharedFrom: code, teams: mergedTeams, updatedAt: new Date().toISOString() };
+          const merged: Tournament = { ...remote, sharedFrom: code, teams: mergedTeams };
           // Push merged back to owner's DB
           await fetch(`/api/share/${code}`, {
             method: "PUT", headers: { "Content-Type": "application/json" },
@@ -335,9 +335,22 @@ export default function TeamsPage() {
         } catch { sharedMerged.push(st); }
       }
 
-      const merged = [...ownedMerged, ...sharedMerged];
-      saveTournaments(merged);
-      setTournaments(merged);
+      // Combine owned + shared, deduplicating by ID.
+      // If the same ID appears in both (owner imported their own tournament),
+      // prefer the sharedFrom version so the collaborator view is consistent.
+      const seenIds = new Set<string>();
+      // Process sharedMerged first so they win on conflict
+      const combined: Tournament[] = [];
+      for (const t of [...sharedMerged, ...ownedMerged]) {
+        if (!seenIds.has(t.id)) { seenIds.add(t.id); combined.push(t); }
+      }
+      // Restore original display order (owned first, shared second)
+      const finalMerged = [
+        ...combined.filter(t => !t.sharedFrom),
+        ...combined.filter(t =>  t.sharedFrom),
+      ];
+      saveTournaments(finalMerged);
+      setTournaments(finalMerged);
       if (syncStatus !== 'unauthed') setSyncStatus('synced');
       if (showToast) toast.success(`Synced ☁️`);
     } catch {
