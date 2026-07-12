@@ -426,7 +426,7 @@ export default function TeamsPage() {
 
       // Phone number detection — pick it up wherever it appears (usually line 3)
       if (!phone && isPhone(line)) {
-        phone = line.trim();
+        phone = line.replace(/\s/g, '').trim(); // strip all spaces
         continue;
       }
 
@@ -1058,7 +1058,20 @@ export default function TeamsPage() {
                       <UserPlus className="h-4 w-4 shrink-0" style={{ color:"rgba(196,181,253,0.4)" }} />
                       <input
                         value={addForm.name}
-                        onChange={(e) => setAddForm((f) => ({ ...f, name: e.target.value }))}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v.includes('\n')) {
+                            // Mobile paste: text arrives via onChange with newlines
+                            const parsed = parseTeamPaste(v);
+                            if (parsed) {
+                              if (parsed.teamName) setAddForm((f) => ({ ...f, name: parsed.teamName, phone: parsed.phone || f.phone }));
+                              if (parsed.players.length > 0) setPlayerInputs(parsed.players);
+                              toast.success('Team pasted!');
+                              return;
+                            }
+                          }
+                          setAddForm((f) => ({ ...f, name: v }));
+                        }}
                         onKeyDown={(e) => { if (e.key === "Enter" && addForm.name.trim()) handleAddTeamToScreen(); }}
                         onPaste={handleTeamNamePaste}
                         placeholder="Enter team name"
@@ -1391,7 +1404,22 @@ export default function TeamsPage() {
               {inputs.map((row, i) => (
                 <div key={i} className="space-y-1.5 pb-2" style={{ borderBottom: "1px solid rgba(124,58,237,0.08)" }}>
                   <div className="flex items-center gap-2">
-                    <input value={row.name} onChange={(e) => updateRow(i, "name", e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addRow(); setTimeout(() => { document.querySelectorAll<HTMLInputElement>("[data-team-input]")[inputs.length]?.focus(); }, 50); } }} onPaste={(e) => handleModalTeamPaste(e, i)} data-team-input autoFocus={i === inputs.length - 1} placeholder={`Team name`} maxLength={20} className="flex-1 px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-sm text-white placeholder-zinc-500 focus:border-violet-500/60 focus:outline-none transition-all" />
+                    <input value={row.name} onChange={(e) => {
+                      const v = e.target.value;
+                      if (v.includes('\n')) {
+                        const parsed = parseTeamPaste(v);
+                        if (parsed) {
+                          const u = [...inputs];
+                          if (parsed.teamName) u[i] = { ...u[i], name: parsed.teamName };
+                          if (parsed.phone) u[i] = { ...u[i], phone: parsed.phone, showPhone: true };
+                          if (parsed.players.length > 0) u[i] = { ...u[i], players: parsed.players.join(', ') };
+                          setInputs(u);
+                          toast.success('Team pasted!');
+                          return;
+                        }
+                      }
+                      updateRow(i, "name", v);
+                    }} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addRow(); setTimeout(() => { document.querySelectorAll<HTMLInputElement>("[data-team-input]")[inputs.length]?.focus(); }, 50); } }} onPaste={(e) => handleModalTeamPaste(e, i)} data-team-input autoFocus={i === inputs.length - 1} placeholder={`Team name`} maxLength={20} className="flex-1 px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-sm text-white placeholder-zinc-500 focus:border-violet-500/60 focus:outline-none transition-all" />
                     {inputs.length > 1 && <button onClick={() => removeRow(i)} className="p-1 rounded-md hover:bg-zinc-800 shrink-0"><Minus className="h-3.5 w-3.5 text-zinc-500" /></button>}
                   </div>
                   <input
