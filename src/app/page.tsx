@@ -97,6 +97,11 @@ export default function TeamsPage() {
   const [importLoading, setImportLoading] = useState(false);
   const [selectedMatch, setSelectedMatch] = useState<number | null>(null);
   const [editingPlayerIdx, setEditingPlayerIdx] = useState<number | null>(null);
+  const [showRoomInfo, setShowRoomInfo] = useState(false);
+  const [showRulesModal, setShowRulesModal] = useState(false);
+  const [waGroupLink, setWaGroupLink] = useState("");
+  const [waMessage, setWaMessage] = useState("");
+  const [rulesText, setRulesText] = useState("");
 
   // Load local immediately, then silently pull + merge from DB on mount
   useEffect(() => {
@@ -318,6 +323,13 @@ export default function TeamsPage() {
       case "fraggers": setStandingsTab("fraggers"); setShowStandings(true); break;
       case "slots": setShowSlots(true); break;
       case "edit": setShowEdit(true); break;
+      case "room-info":
+        setWaGroupLink(tournament?.waGroup ?? "");
+        setWaMessage(tournament?.waMessage ?? `Hi *{team}*! 🎮\nJoin our scrim group:\n{link}`);
+        setShowRoomInfo(true); break;
+      case "rules":
+        setRulesText((t.rules ?? []).join("\n"));
+        setShowRulesModal(true); break;
       default: toast("Coming soon 🚀");
     }
   };
@@ -370,68 +382,78 @@ export default function TeamsPage() {
     toast.success(`"${newTeam.name}" added!`);
   };
 
-  const parseTeamPaste = (text: string): { teamName: string; players: string[] } | null => {
-    // Normalise: split on newlines, strip surrounding whitespace, drop empties
+  const parseTeamPaste = (text: string): { teamName: string; phone: string; captain: string; players: string[] } | null => {
     const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-    if (lines.length < 2) return null; // single line — let normal paste happen
+    if (lines.length < 2) return null;
 
-    // Strip any leading number/bullet prefix from a player line
-    // Handles: "1 Name", "1. Name", "1) Name", "1- Name", "(1) Name", "[1] Name", "#1 Name", "1.Name"
-    const stripNumber = (s: string) =>
-      s.replace(/^(?:\(?\[?#?\d+[\.\)\]\-]?\)?\s*)/u, '').trim();
+    // Strip leading bullet/number prefix: "1.", "1)", "(1)", "[1]", "#1", etc.
+    const stripBullet = (s: string) => s.replace(/^(?:\(?\[?#?\d+[\.\)\]\-]?\)?\s*)/u, '').trim();
 
-    // Returns true if a line looks like a section header to skip
-    const isHeaderLine = (s: string) =>
-      /^[Pp]layers?\s*[:：\-]?\s*$/.test(s) ||
-      /^[Rr]oster\s*[:：]?\s*$/.test(s) ||
-      /^[Mm]embers?\s*[:：]?\s*$/.test(s) ||
-      /^[Ss]quad\s*[:：]?\s*$/.test(s);
+    // Is this line a phone number? Digits + optional +/spaces/dashes, 7–15 digits total
+    const isPhone = (s: string) => {
+      const digits = s.replace(/[\s\-\(\)\+]/g, '');
+      return /^\d{7,15}$/.test(digits);
+    };
 
-    // Returns true if line is ONLY a number (e.g. "1" as a standalone line)
-    const isPureNumber = (s: string) => /^\d+$/.test(s);
+    // Section headers to skip entirely
+    const isHeader = (s: string) =>
+      /^(?:[Pp]layers?|[Rr]oster|[Mm]embers?|[Ss]quad|[Ll]eader|[Cc]aptain)\s*[:：\-]?\s*$/.test(s);
+
+    // Explicit team-name label prefix
+    const teamLabelMatch = (s: string) =>
+      s.match(/^(?:[Tt]eam|[Nn]ame|[Ss]quad|[Cc]lan)\s*[:：\-]?\s*(.+)$/);
 
     let teamName = '';
+    let phone = '';
+    let captain = '';
     const playerLines: string[] = [];
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
 
-      // Explicit "Team …" / "Name …" / "Squad …" / "Clan …" label
-      const explicitTeam = line.match(
-        /^(?:[Tt]eam|[Nn]ame|[Ss]quad|[Cc]lan)\s*[:：\-]?\s*(.+)$/
-      );
-      if (explicitTeam) { teamName = explicitTeam[1].trim(); continue; }
+      // Explicit "Team …" label
+      const tl = teamLabelMatch(line);
+      if (tl) { teamName = tl[1].trim(); continue; }
 
-      // Section header lines — skip entirely
-      if (isHeaderLine(line)) continue;
+      // Skip header-only lines
+      if (isHeader(line)) continue;
 
-      // Pure standalone number — skip
-      if (isPureNumber(line)) continue;
-
-      // First meaningful line with no prefix → team name
-      if (!teamName && playerLines.length === 0) {
+      // First line = team name
+      if (!teamName && playerLines.length === 0 && captain === '') {
         teamName = line;
         continue;
       }
 
-      // Everything else is a player — strip leading number prefix
-      const player = stripNumber(line);
-      if (player) playerLines.push(player);
+      // Phone number detection — pick it up wherever it appears (usually line 3)
+      if (!phone && isPhone(line)) {
+        phone = line.trim();
+        continue;
+      }
+
+      // First player = captain/leader
+      const stripped = stripBullet(line);
+      const playerName = stripped || line;
+      if (!captain) {
+        captain = playerName;
+        playerLines.push(playerName);
+      } else {
+        playerLines.push(playerName);
+      }
     }
 
-    const players = [...new Set(playerLines)]; // deduplicate
+    const players = [...new Set(playerLines)];
     if (!teamName && !players.length) return null;
-    return { teamName, players };
+    return { teamName, phone, captain, players };
   };
 
   const handleTeamNamePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
     const text = e.clipboardData.getData('text');
     const parsed = parseTeamPaste(text);
-    if (!parsed) return; // let normal paste happen
+    if (!parsed) return;
     e.preventDefault();
-    if (parsed.teamName) setAddForm((f) => ({ ...f, name: parsed.teamName }));
+    if (parsed.teamName) setAddForm((f) => ({ ...f, name: parsed.teamName, phone: parsed.phone || f.phone }));
     if (parsed.players.length > 0) setPlayerInputs(parsed.players);
-    toast.success('Team pasted! Check the fields and tap Add Team.');
+    toast.success('Team pasted!');
   };
 
   const handleModalTeamPaste = (e: React.ClipboardEvent<HTMLInputElement>, rowIndex: number) => {
@@ -441,6 +463,7 @@ export default function TeamsPage() {
     e.preventDefault();
     const u = [...inputs];
     if (parsed.teamName) u[rowIndex] = { ...u[rowIndex], name: parsed.teamName };
+    if (parsed.phone) u[rowIndex] = { ...u[rowIndex], phone: parsed.phone, showPhone: true };
     if (parsed.players.length > 0) u[rowIndex] = { ...u[rowIndex], players: parsed.players.join(', ') };
     setInputs(u);
     toast.success('Team pasted!');
@@ -817,6 +840,8 @@ export default function TeamsPage() {
                           <Pill label="Team poster" onPress={() => openAction(t, "poster")} />
                           <Pill label="Slot list" onPress={() => openAction(t, "slots")} />
                           <Pill label="Certificate" onPress={() => openAction(t, "certificate")} />
+                          <Pill label="Room Info" icon={<svg viewBox="0 0 24 24" className="h-3 w-3" fill="#25d366"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.127.558 4.126 1.534 5.859L0 24l6.335-1.518A11.96 11.96 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.818 9.818 0 01-5.003-1.371l-.36-.214-3.722.892.934-3.617-.236-.373A9.818 9.818 0 0112 2.182c5.418 0 9.818 4.4 9.818 9.818 0 5.419-4.4 9.818-9.818 9.818z"/></svg>} onPress={() => openAction(t, "room-info")} />
+                          <Pill label="Rules" onPress={() => openAction(t, "rules")} />
                           <Pill label="Share" icon={<Share2 className="h-3 w-3" />} onPress={() => handleShare(t)} variant="share" />
                           <Pill label="Edit" icon={<Pencil className="h-3 w-3" />} onPress={() => openAction(t, "edit")} variant="edit" />
                         </div>
@@ -2001,6 +2026,131 @@ export default function TeamsPage() {
               {importLoading ? "Importing…" : "Import"}
             </button>
             <button onClick={() => { setShowImportCode(false); setImportCode(""); }} className="w-full mt-3 py-2.5 rounded-xl text-sm font-medium" style={{ color: "rgba(196,181,253,0.4)" }}>Cancel</button>
+          </div>
+        </div>
+      )}
+      {/* ROOM INFO — WhatsApp group invite */}
+      {showRoomInfo && tournament && (() => {
+        const wasvg = <svg viewBox="0 0 24 24" className="h-4 w-4 fill-white shrink-0"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.127.558 4.126 1.534 5.859L0 24l6.335-1.518A11.96 11.96 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.818 9.818 0 01-5.003-1.371l-.36-.214-3.722.892.934-3.617-.236-.373A9.818 9.818 0 0112 2.182c5.418 0 9.818 4.4 9.818 9.818 0 5.419-4.4 9.818-9.818 9.818z"/></svg>;
+        const sentIds = new Set(tournament.waGroupSent ?? []);
+        const buildMsg = (teamName: string) =>
+          waMessage.replace(/\{team\}/g, teamName).replace(/\{link\}/g, waGroupLink.trim() || "—");
+        const sendToLeader = (team: typeof tournament.teams[number]) => {
+          const clean = (team.phone ?? "").replace(/\D/g, "");
+          if (!clean) return;
+          window.open(`https://wa.me/${clean}?text=${encodeURIComponent(buildMsg(team.name))}`, "_blank", "noopener,noreferrer");
+          // Mark as sent
+          const newSent = [...new Set([...sentIds, team.id])];
+          const updated = { ...tournament, waGroup: waGroupLink.trim(), waMessage, waGroupSent: newSent };
+          save(updated as Tournament & { waGroup: string; waMessage: string; waGroupSent: string[] });
+          sentIds.add(team.id);
+        };
+        return (
+          <div className="fixed inset-0 z-[90] flex items-end justify-center p-4" style={{ background: "rgba(0,0,0,0.85)" }} onClick={() => setShowRoomInfo(false)}>
+            <div className="w-full max-w-sm rounded-3xl anim-slide-up flex flex-col" style={{ background: "#13092b", border: "1px solid rgba(124,58,237,0.3)", maxHeight: "88dvh" }} onClick={(e) => e.stopPropagation()}>
+              {/* Fixed top */}
+              <div className="px-6 pt-5 pb-4 shrink-0 space-y-3">
+                <div className="flex items-center justify-center gap-2">
+                  <svg viewBox="0 0 24 24" className="h-5 w-5" fill="#25d366"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.127.558 4.126 1.534 5.859L0 24l6.335-1.518A11.96 11.96 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.818 9.818 0 01-5.003-1.371l-.36-.214-3.722.892.934-3.617-.236-.373A9.818 9.818 0 0112 2.182c5.418 0 9.818 4.4 9.818 9.818 0 5.419-4.4 9.818-9.818 9.818z"/></svg>
+                  <p className="text-xs font-bold tracking-widest" style={{ color: "rgba(167,139,250,0.6)" }}>WHATSAPP GROUP</p>
+                </div>
+                {/* Group link */}
+                <div>
+                  <p className="text-[10px] font-bold mb-1 uppercase" style={{ color: "rgba(167,139,250,0.45)" }}>Group Invite Link</p>
+                  <input value={waGroupLink} onChange={(e) => setWaGroupLink(e.target.value)}
+                    placeholder="https://chat.whatsapp.com/..."
+                    className="w-full px-3 py-2.5 rounded-xl text-sm text-white focus:outline-none"
+                    style={{ background: "rgba(37,211,102,0.08)", border: "1px solid rgba(37,211,102,0.2)", caretColor: "#25d366" }} />
+                </div>
+                {/* Message template */}
+                <div>
+                  <p className="text-[10px] font-bold mb-1 uppercase" style={{ color: "rgba(167,139,250,0.45)" }}>Default Message <span style={{ color: "rgba(167,139,250,0.3)" }}>— use &#123;team&#125; and &#123;link&#125;</span></p>
+                  <textarea value={waMessage} onChange={(e) => setWaMessage(e.target.value)} rows={3}
+                    className="w-full px-3 py-2 rounded-xl text-sm resize-none focus:outline-none"
+                    style={{ background: "rgba(124,58,237,0.08)", border: "1px solid rgba(124,58,237,0.2)", color: "#e9d5ff", caretColor: "#a78bfa" }} />
+                </div>
+              </div>
+              {/* Divider */}
+              <div className="mx-6 h-px shrink-0" style={{ background: "rgba(124,58,237,0.12)" }} />
+              {/* Leaders list — scrollable */}
+              <div className="px-4 pt-3 pb-1 shrink-0">
+                <p className="text-[10px] font-bold" style={{ color: "rgba(167,139,250,0.5)" }}>
+                  LEADERS — {tournament.teams.filter(t => t.phone).length}/{tournament.teams.length} with number
+                </p>
+              </div>
+              <div className="overflow-y-auto flex-1 px-4 pb-4 space-y-2">
+                {tournament.teams.map((team) => {
+                  const hasPhone = !!team.phone?.trim();
+                  const sent = sentIds.has(team.id);
+                  return (
+                    <div key={team.id} className="flex items-center gap-3 px-3 py-2.5 rounded-2xl" style={{ background: sent ? "rgba(37,211,102,0.06)" : "rgba(255,255,255,0.03)", border: `1px solid ${sent ? "rgba(37,211,102,0.2)" : "rgba(255,255,255,0.05)"}` }}>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold truncate" style={{ color: sent ? "#4ade80" : "white" }}>{team.name}</p>
+                        <p className="text-[11px] truncate" style={{ color: hasPhone ? "rgba(167,139,250,0.5)" : "rgba(167,139,250,0.2)" }}>
+                          {hasPhone ? team.phone : "No number"}
+                        </p>
+                      </div>
+                      {hasPhone ? (
+                        <button onClick={() => sendToLeader(team)}
+                          className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-white press-scale"
+                          style={{ background: sent ? "rgba(37,211,102,0.2)" : "linear-gradient(135deg,#25d366,#128c7e)", border: sent ? "1px solid rgba(37,211,102,0.4)" : "none", color: sent ? "#4ade80" : "white" }}>
+                          {sent ? "✓ Sent" : <>{wasvg} Send</>}
+                        </button>
+                      ) : (
+                        <span className="text-[10px] px-2 py-1 rounded-lg" style={{ background: "rgba(255,255,255,0.04)", color: "rgba(167,139,250,0.2)" }}>No #</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="px-6 pb-5 pt-2 shrink-0">
+                <button onClick={() => setShowRoomInfo(false)} className="w-full py-2 text-sm font-medium" style={{ color: "rgba(196,181,253,0.4)" }}>Close</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* RULES MODAL */}
+      {showRulesModal && tournament && (
+        <div className="fixed inset-0 z-[90] flex items-end justify-center p-4" style={{ background: "rgba(0,0,0,0.8)" }} onClick={() => setShowRulesModal(false)}>
+          <div className="w-full max-w-sm rounded-3xl p-6 anim-slide-up" style={{ background: "#13092b", border: "1px solid rgba(124,58,237,0.3)" }} onClick={(e) => e.stopPropagation()}>
+            <p className="text-xs font-bold tracking-widest text-center mb-1" style={{ color: "rgba(167,139,250,0.6)" }}>RULES</p>
+            <p className="text-base font-bold text-white text-center mb-4">{tournament.name}</p>
+            <p className="text-[10px] mb-1.5" style={{ color: "rgba(167,139,250,0.5)" }}>ONE RULE PER LINE</p>
+            <textarea
+              autoFocus
+              value={rulesText}
+              onChange={(e) => setRulesText(e.target.value)}
+              placeholder={"No teaming\nNo emulator\nSquad only\n..."}
+              rows={7}
+              className="w-full rounded-xl p-3 text-sm resize-none focus:outline-none mb-4"
+              style={{ background: "rgba(124,58,237,0.08)", border: "1px solid rgba(124,58,237,0.2)", color: "#e9d5ff", caretColor: "#a78bfa" }}
+            />
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={() => {
+                  const rules = rulesText.split("\n").map((r) => r.trim()).filter(Boolean);
+                  const updated = { ...tournament, rules };
+                  save(updated);
+                  // Share to WhatsApp
+                  const msg = `📋 *${tournament.name} — Rules*\n\n${rules.map((r, i) => `${i + 1}. ${r}`).join("\n")}\n\nGood luck! 🎮`;
+                  window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank", "noopener,noreferrer");
+                  setShowRulesModal(false);
+                }}
+                className="w-full py-3.5 rounded-xl font-bold text-sm text-white press-scale flex items-center justify-center gap-2"
+                style={{ background: "linear-gradient(135deg,#25d366,#128c7e)" }}
+              >
+                <svg viewBox="0 0 24 24" className="h-4 w-4 fill-white"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.127.558 4.126 1.534 5.859L0 24l6.335-1.518A11.96 11.96 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.818 9.818 0 01-5.003-1.371l-.36-.214-3.722.892.934-3.617-.236-.373A9.818 9.818 0 0112 2.182c5.418 0 9.818 4.4 9.818 9.818 0 5.419-4.4 9.818-9.818 9.818z"/></svg>
+                Save & Share on WhatsApp
+              </button>
+              <button
+                onClick={() => { const rules = rulesText.split("\n").map((r) => r.trim()).filter(Boolean); save({ ...tournament, rules }); setShowRulesModal(false); toast.success("Rules saved"); }}
+                className="w-full py-2.5 rounded-xl text-sm font-bold press-scale"
+                style={{ background: "rgba(124,58,237,0.15)", color: "#c4b5fd", border: "1px solid rgba(124,58,237,0.3)" }}
+              >Save only</button>
+              <button onClick={() => setShowRulesModal(false)} className="w-full py-2 text-sm font-medium" style={{ color: "rgba(196,181,253,0.4)" }}>Cancel</button>
+            </div>
           </div>
         </div>
       )}

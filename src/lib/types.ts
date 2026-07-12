@@ -84,10 +84,14 @@ export interface Tournament {
   id: string;
   name: string;
   createdAt: string;
-  updatedAt?: string;          // set on every save; used for sync conflict resolution
+  updatedAt?: string;
   teams: Team[];
   rules?: string[];
   geminiData?: GeminiOutput;
-  assignments?: Record<string, string>; // group label -> teamId
+  assignments?: Record<string, string>;
   pointSystem?: PointSystem;
+  roomInfo?: { roomId?: string; password?: string; matchTime?: string; note?: string };
+  waGroup?: string;               // WhatsApp group invite link
+  waMessage?: string;             // Default message template ({team} and {link} placeholders)
+  waGroupSent?: string[];         // teamIds that have been sent the invite
 }
