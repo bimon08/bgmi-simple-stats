@@ -1,15 +1,33 @@
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import { auth } from "@root/auth";
-import { Tournament } from "@/lib/types";
+import { Tournament, Team } from "@/lib/types";
+import { validateSyncKey } from "@/lib/syncKey";
 
-// GET /api/tournaments — fetch all tournaments for the current user
-export async function GET() {
+/** Resolve userId from session OR Bearer sync key. Returns { userId, isCollaborator }. */
+async function resolveAuth(req: Request): Promise<{ userId: string; isCollaborator: boolean } | null> {
+  // 1. Try session first
   const session = await auth();
-  if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (session?.user?.id) return { userId: session.user.id, isCollaborator: false };
+
+  // 2. Try Bearer sync key
+  const authHeader = req.headers.get("Authorization") ?? "";
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+  if (match) {
+    const userId = await validateSyncKey(match[1].trim());
+    if (userId) return { userId, isCollaborator: true };
+  }
+
+  return null;
+}
+
+// GET /api/tournaments — fetch all tournaments for the current user (or collaborator)
+export async function GET(req: Request) {
+  const caller = await resolveAuth(req);
+  if (!caller) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const rows = await prisma.savedTournament.findMany({
-    where: { userId: session.user.id },
+    where: { userId: caller.userId },
     orderBy: { updatedAt: "desc" },
   });
 
@@ -19,75 +37,79 @@ export async function GET() {
     if (shortCode)  t.shortCode  = shortCode;
     return t;
   });
-  return NextResponse.json({ tournaments });
+
+  return NextResponse.json({ tournaments, isCollaborator: caller.isCollaborator });
 }
 
-// PUT /api/tournaments — upsert a batch of tournaments
+// PUT /api/tournaments — server-side team-level merge upsert
 export async function PUT(req: Request) {
-  const session = await auth();
-  if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const caller = await resolveAuth(req);
+  if (!caller) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { tournaments } = await req.json() as { tournaments: Tournament[] };
   if (!Array.isArray(tournaments)) return NextResponse.json({ error: "Invalid" }, { status: 400 });
 
   await Promise.all(
-    tournaments.map((t) =>
-      prisma.savedTournament.upsert({
-        where: { id: t.id },
+    tournaments.map(async (incoming) => {
+      const stored = await prisma.savedTournament.findUnique({ where: { id: incoming.id } });
+      let mergedData: Tournament = incoming;
+
+      if (stored) {
+        const storedT = stored.data as unknown as Tournament;
+        // Team-level union: keep teams from both sides
+        const incomingTeamMap = new Map<string, Team>((incoming.teams ?? []).map(t => [t.id, t]));
+        const storedTeamMap   = new Map<string, Team>((storedT.teams  ?? []).map(t => [t.id, t]));
+        const allTeamIds = new Set([...incomingTeamMap.keys(), ...storedTeamMap.keys()]);
+        const mergedTeams: Team[] = [];
+        allTeamIds.forEach(id => {
+          mergedTeams.push(incomingTeamMap.get(id) ?? storedTeamMap.get(id)!);
+        });
+        mergedData = { ...incoming, teams: mergedTeams };
+      }
+
+      return prisma.savedTournament.upsert({
+        where: { id: incoming.id },
         update: {
-          data: t as object,
-          userId: session.user!.id!,
-          entryFee: t.entryFee ?? 0,
-          isActive: t.isActive ?? false,
+          data: mergedData as object,
+          userId: caller.userId,
+          entryFee: incoming.entryFee ?? 0,
+          isActive: incoming.isActive ?? false,
         },
         create: {
-          id: t.id,
-          userId: session.user!.id!,
-          data: t as object,
-          entryFee: t.entryFee ?? 0,
-          isActive: t.isActive ?? false,
+          id: incoming.id,
+          userId: caller.userId,
+          data: mergedData as object,
+          entryFee: incoming.entryFee ?? 0,
+          isActive: incoming.isActive ?? false,
         },
-      })
-    )
+      });
+    })
   );
 
-  // Auto-book leaders by phone number for active tournaments with an entry fee.
-  // No balance check — balance can go negative (admin is debiting on their behalf).
+  // Auto-book leaders for active tournaments
   const activeTournaments = tournaments.filter(t => (t.isActive ?? false) && (t.entryFee ?? 0) > 0);
   if (activeTournaments.length > 0) {
     const wallets = await prisma.wallet.findMany({
-      where: { userId: session.user.id!, phone: { not: null } },
+      where: { userId: caller.userId, phone: { not: null } },
       select: { id: true, phone: true },
     });
-
     for (const t of activeTournaments) {
       const existing = await prisma.slotBooking.findMany({
         where: { tournamentId: t.id },
         select: { walletId: true },
       });
       const bookedIds = new Set(existing.map(b => b.walletId));
-
       for (const team of (t.teams ?? [])) {
         if (!team.phone) continue;
         const phoneDigits = (team.phone as string).replace(/\D/g, "");
         if (phoneDigits.length < 7) continue;
-        // Normalize: strip all non-digits, take last 10 digits.
-        // Handles +91, 0 prefix, any country code, spaces, dashes.
-        const normalize = (p: string) => {
-          const d = p.replace(/\D/g, "");
-          return d.length > 10 ? d.slice(-10) : d;
-        };
-        const normTeam = normalize(phoneDigits);
-        const wallet = wallets.find(w => normalize(w.phone ?? "") === normTeam);
+        const normalize = (p: string) => { const d = p.replace(/\D/g, ""); return d.length > 10 ? d.slice(-10) : d; };
+        const wallet = wallets.find(w => normalize(w.phone ?? "") === normalize(phoneDigits));
         if (!wallet || bookedIds.has(wallet.id)) continue;
-        // Seed roster from the team entry so player sees their pre-filled team
-        const roster = {
-          teamName: (team as { name?: string }).name ?? "",
-          players: (team as { players?: string[] }).players ?? [],
-        };
+        const roster = { teamName: (team as { name?: string }).name ?? "", players: (team as { players?: string[] }).players ?? [] };
         await prisma.slotBooking.create({
           data: { walletId: wallet.id, tournamentId: t.id, entryFee: t.entryFee ?? 0, status: "PENDING", bookedByAdmin: true, roster },
-        }).catch(() => {}); // ignore unique constraint errors (race safety)
+        }).catch(() => {});
         bookedIds.add(wallet.id);
       }
     }

@@ -98,4 +98,5 @@ export interface Tournament {
   isActive?: boolean;             // Whether booking is open for players
   shareToken?: string;            // Cached UUID share token (for instant share open)
   shortCode?: string;             // Cached 6-char short code
+  sharedFrom?: string;            // 6-char code if imported via share (collaborator mode)
 }

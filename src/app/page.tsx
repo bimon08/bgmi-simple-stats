@@ -105,6 +105,8 @@ export default function TeamsPage() {
   const [waGroupLink, setWaGroupLink] = useState("");
   const [waMessage, setWaMessage] = useState("");
   const [rulesText, setRulesText] = useState("");
+  const [tournamentTab, setTournamentTab] = useState<'mine' | 'shared'>('mine');
+  const [collabDeleteId, setCollabDeleteId] = useState<string | null>(null);
 
   // Load local immediately, then silently pull + merge from DB on mount
   useEffect(() => {
@@ -267,44 +269,76 @@ export default function TeamsPage() {
     setSyncStatus('syncing');
     try {
       const local = loadTournaments();
-      // Pull → merge → push
-      const pullRes = await fetch("/api/tournaments");
-      if (pullRes.status === 401) { setSyncStatus('unauthed'); return; }
-      if (!pullRes.ok) throw new Error("Sync failed");
-      const { tournaments: remote } = await pullRes.json() as { tournaments: Tournament[] };
-      const remoteMap = new Map(remote.map((t: Tournament) => [t.id, t]));
-      const localMap  = new Map(local.map((t) => [t.id, t]));
-      const allIds = new Set([...localMap.keys(), ...remoteMap.keys()]);
-      const merged: Tournament[] = [];
-      allIds.forEach((id) => {
-        const l = localMap.get(id);
-        const r = remoteMap.get(id);
-        if (!l) { merged.push(r!); return; }
-        if (!r) { merged.push(l);  return; }
-        // Team-level merge: union teams from both sides by ID
-        // Scalar fields: winner is the side with newer updatedAt
-        const localNewer = (l.updatedAt ?? "") >= (r.updatedAt ?? "");
-        const base = localNewer ? l : r;
-        const other = localNewer ? r : l;
-        const baseTeamMap  = new Map((base.teams  ?? []).map(t => [t.id, t]));
-        const otherTeamMap = new Map((other.teams ?? []).map(t => [t.id, t]));
-        const allTeamIds = new Set([...baseTeamMap.keys(), ...otherTeamMap.keys()]);
-        const mergedTeams: Team[] = [];
-        allTeamIds.forEach(tid => {
-          // Prefer base version if available (newer); add from other side if missing
-          mergedTeams.push(baseTeamMap.get(tid) ?? otherTeamMap.get(tid)!);
-        });
-        merged.push({ ...base, teams: mergedTeams });
-      });
-      const pushRes = await fetch("/api/tournaments", {
-        method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tournaments: merged }),
-      });
-      if (pushRes.status === 401) { setSyncStatus('unauthed'); return; }
-      if (!pushRes.ok) throw new Error("Sync failed");
+      const ownedLocal  = local.filter(t => !t.sharedFrom);
+      const sharedLocal = local.filter(t =>  t.sharedFrom);
+
+      // ── Pull + push owned tournaments (requires session) ──────────────────
+      // Skip entirely if there are no owned tournaments (pure collaborator)
+      let ownedMerged: Tournament[] = ownedLocal;
+      if (ownedLocal.length > 0) {
+        const pullRes = await fetch("/api/tournaments");
+        if (pullRes.status === 401) { setSyncStatus('unauthed'); }
+        else if (pullRes.ok) {
+          const { tournaments: remote } = await pullRes.json() as { tournaments: Tournament[] };
+          const remoteMap = new Map(remote.map((t: Tournament) => [t.id, t]));
+          const localMap  = new Map(ownedLocal.map(t => [t.id, t]));
+          const allIds = new Set([...localMap.keys(), ...remoteMap.keys()]);
+          ownedMerged = [];
+          allIds.forEach(id => {
+            const l = localMap.get(id);
+            const r = remoteMap.get(id);
+            if (!l) { ownedMerged.push(r!); return; }
+            if (!r) { ownedMerged.push(l);  return; }
+            const localNewer = (l.updatedAt ?? "") >= (r.updatedAt ?? "");
+            const base = localNewer ? l : r;
+            const other = localNewer ? r : l;
+            const baseTeamMap  = new Map((base.teams  ?? []).map(t => [t.id, t]));
+            const otherTeamMap = new Map((other.teams ?? []).map(t => [t.id, t]));
+            const allTeamIds = new Set([...baseTeamMap.keys(), ...otherTeamMap.keys()]);
+            const mergedTeams: Team[] = [];
+            allTeamIds.forEach(tid => { mergedTeams.push(baseTeamMap.get(tid) ?? otherTeamMap.get(tid)!); });
+            ownedMerged.push({ ...base, teams: mergedTeams });
+          });
+          if (ownedMerged.length > 0) {
+            const pushRes = await fetch("/api/tournaments", {
+              method: "PUT", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ tournaments: ownedMerged }),
+            });
+            if (pushRes.status === 401) setSyncStatus('unauthed');
+            else if (!pushRes.ok) throw new Error("Sync failed");
+          }
+        }
+      }
+
+      // ── Pull + push shared tournaments (no auth needed) ──────────────────
+      const sharedMerged: Tournament[] = [];
+      for (const st of sharedLocal) {
+        const code = st.sharedFrom!;
+        try {
+          // Pull latest from owner's DB
+          const sRes = await fetch(`/api/share/${code}`);
+          if (!sRes.ok) { sharedMerged.push(st); continue; } // code gone? keep local
+          const { tournament: remote } = await sRes.json() as { tournament: Tournament };
+          // Merge teams (incoming local wins for its teams, remote fills gaps)
+          const localTeamMap  = new Map((st.teams     ?? []).map(t => [t.id, t]));
+          const remoteTeamMap = new Map((remote.teams ?? []).map(t => [t.id, t]));
+          const allTeamIds = new Set([...localTeamMap.keys(), ...remoteTeamMap.keys()]);
+          const mergedTeams: Team[] = [];
+          allTeamIds.forEach(tid => { mergedTeams.push(localTeamMap.get(tid) ?? remoteTeamMap.get(tid)!); });
+          const merged: Tournament = { ...remote, sharedFrom: code, teams: mergedTeams, updatedAt: new Date().toISOString() };
+          // Push merged back to owner's DB
+          await fetch(`/api/share/${code}`, {
+            method: "PUT", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tournament: merged }),
+          });
+          sharedMerged.push(merged);
+        } catch { sharedMerged.push(st); }
+      }
+
+      const merged = [...ownedMerged, ...sharedMerged];
       saveTournaments(merged);
       setTournaments(merged);
-      setSyncStatus('synced');
+      if (syncStatus !== 'unauthed') setSyncStatus('synced');
       if (showToast) toast.success(`Synced ☁️`);
     } catch {
       setSyncStatus('offline');
@@ -440,6 +474,9 @@ export default function TeamsPage() {
     const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     if (lines.length < 2) return null;
 
+    // Strip leading separator chars (-, –, :, ：) from captured values
+    const stripSep = (s: string) => s.replace(/^[\-–:：]\s*/, '').trim();
+
     // Normalize phone to last 10 digits (handles +91, 0-prefix, any country code)
     const normalizePhone = (s: string) => {
       const d = s.replace(/\D/g, '');
@@ -457,59 +494,87 @@ export default function TeamsPage() {
 
     // ── PASS 1: Look for explicitly labelled lines ──────────────────────────
     // Handles formats like:
-    //   Team Name TSMent
-    //   Leader Name SUGARXDADDYz
-    //   Leader's phone number 8729811863
-    //   Player 2 TSMxSORRYbro   |   Player choke|god
+    //   Team - Maram / Team Name TSMent / Team name - KOLIS ESPORT
+    //   Leader - KW・Mait / Leader Name SUGARXDADDYz / Leader Egocapt
+    //   Phn - 9233805660 / Leader's phone number 8729811863 / Phone number 6009543515
+    //   Player 2. 乡TBP乡KD / Player 3 TSMxSORRYbro / Player choke|god
+    //   Player Name - TKLxChilly → continuation lines: "  - KolisTheOGzV", "  RRxVenom"
     let teamName = '';
     let phone = '';
     let captain = '';
     const players: string[] = [];
     let labeledHits = 0;
-    let hasStructuredLabel = false; // only true when Leader Name / Player N / Leader's phone is found
+    let hasStructuredLabel = false;
+    let afterPlayerNameLabel = false; // tracks "Player Name -" continuation mode
 
     for (const line of lines) {
-      // Team Name <value>  /  Team: <value>  /  Squad <value>
-      const mTeam = line.match(/^(?:[Tt]eam\s+[Nn]ame|[Tt]eam|[Ss]quad|[Cc]lan)\s*[:：\-]?\s+(.+)$/u);
-      if (mTeam) { teamName = mTeam[1].trim(); labeledHits++; continue; }
+      // ── Team label ──────────────────────────────────────────────────────────
+      const mTeam = line.match(/^(?:[Tt]eam\s+[Nn]ame|[Tt]eam|[Ss]quad|[Cc]lan)\s*[-–:：]?\s+(.+)$/u);
+      if (mTeam) {
+        teamName = stripSep(mTeam[1].trim());
+        labeledHits++; afterPlayerNameLabel = false; continue;
+      }
 
-      // Leader Name / Leader's Name / Leader <name> / Captain <name>  ← structured
-      // Handles: "Leader Name Egocapt", "Leader's Name X", "Leader Egocapt" (no "Name")
+      // ── Leader / Captain label ───────────────────────────────────────────────
+      // Handles: "Leader - KW", "Leader Name X", "Leader's Name X", "Captain X"
       const mLeader = line.match(/^(?:[Ll]eader['s\u2019]*|[Cc]aptain)\s+(?:[Nn]ame\s+)?(.+)$/u);
       if (mLeader) {
-        const val = mLeader[1].trim();
-        // Skip if the captured value IS just "name" (bare "Leader Name" header line)
-        if (/^[Nn]ame\s*$/.test(val)) { /* header only, skip */ }
-        else {
-          const alts = splitOrAlts(val);
-          captain = alts[0];
-          alts.slice(1).forEach(p => { if (!isPhone(p)) players.push(p); });
-          labeledHits++; hasStructuredLabel = true;
-        }
-        continue;
+        const raw = stripSep(mLeader[1].trim());
+        // Skip bare "Leader Name" / "Leader:" header-only lines
+        if (/^[Nn]ame\s*$/.test(raw) || raw === '') { continue; }
+        const alts = splitOrAlts(raw);
+        captain = alts[0];
+        alts.slice(1).forEach(p => { if (!isPhone(p)) players.push(p); });
+        labeledHits++; hasStructuredLabel = true; afterPlayerNameLabel = false; continue;
       }
 
-      // Leader's phone number / Leader phone / Phone number  ← structured if labelled
+      // ── Phone label ─────────────────────────────────────────────────────────
+      // Handles: "Phone number", "Phn -", "Ph -", "Leader's phone number"
       const mPhone = line.match(
-        /^(?:[Ll]eader(?:[''\u2019]s?|s)?\s+)?[Pp]hone(?:\s+[Nn]umber)?\s+(.+)$/u
+        /^(?:[Ll]eader(?:[''\u2019]s?|s)?\s+)?[Pp]h(?:one?|n)\s*(?:[Nn]umber\s*)?[-–:：]?\s+(.+)$/u
       );
-      if (mPhone && isPhone(mPhone[1].trim())) {
-        phone = normalizePhone(mPhone[1].trim());
-        labeledHits++; hasStructuredLabel = true; continue;
+      if (mPhone) {
+        const raw = stripSep(mPhone[1].trim());
+        if (isPhone(raw)) {
+          phone = normalizePhone(raw);
+          labeledHits++; hasStructuredLabel = true; afterPlayerNameLabel = false; continue;
+        }
       }
 
-      // Player <N?> <value>  /  Players <value>  ← structured
-      const mPlayer = line.match(/^[Pp]layers?\s+(?:\d+\s+)?(.+)$/u);
+      // ── "Player Name - X" (single-label, multiple players follow) ─────────
+      const mPlayerName = line.match(/^[Pp]layer\s+[Nn]ame\s*[-–:：]\s+(.+)$/u);
+      if (mPlayerName) {
+        const first = mPlayerName[1].trim();
+        if (first && !isPhone(first)) {
+          splitOrAlts(first).forEach(p => { players.push(p); });
+        }
+        labeledHits++; hasStructuredLabel = true; afterPlayerNameLabel = true; continue;
+      }
+
+      // ── Player N <value> / Player <value> ────────────────────────────────────
+      // Handles: "Player 2 X", "Player 2. X", "Player 2- X", "Player X"
+      const mPlayer = line.match(/^[Pp]layers?\s+(?:\d+[.\-\s]+)?(.+)$/u);
       if (mPlayer) {
-        splitOrAlts(mPlayer[1].trim())
+        const raw = stripSep(mPlayer[1].trim());
+        splitOrAlts(raw)
           .filter(p => !isPhone(p))
           .forEach(p => { players.push(p); labeledHits++; hasStructuredLabel = true; });
-        continue;
+        afterPlayerNameLabel = true; continue;
       }
 
-      // Bare phone line — counts as a hit but NOT a structured label
+      // ── Continuation lines after "Player Name -" block ──────────────────────
+      // Handles: "  - KolisTheOGzV", "  -No1xahhh", "  RRxVenom" (indented bare)
+      if (afterPlayerNameLabel) {
+        const stripped = line.replace(/^[-–]\s*/, '').trim();
+        if (stripped && !isPhone(stripped) && !/^[Tt]eam|^[Ll]eader|^[Cc]aptain|^[Pp]h/u.test(line)) {
+          splitOrAlts(stripped).forEach(p => { players.push(p); labeledHits++; });
+          continue;
+        }
+      }
+
+      // ── Bare phone line ───────────────────────────────────────────────────────
       if (!phone && isPhone(line)) {
-        phone = normalizePhone(line); labeledHits++;
+        phone = normalizePhone(line); labeledHits++; afterPlayerNameLabel = false;
       }
     }
 
@@ -625,18 +690,28 @@ export default function TeamsPage() {
       if (!res.ok) { toast.error("Code not found — check and try again"); return; }
       const { tournament: t } = await res.json();
       if (!t) { toast.error("Invalid code"); return; }
-      const cloned: Tournament = { ...t, id: crypto.randomUUID(), name: `${t.name} (imported)`, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+      // Store sharedFrom so changes sync back to the owner's DB via the share code
       const existing = loadTournaments();
+      const alreadyImported = existing.find(e => e.sharedFrom === code);
+      if (alreadyImported) {
+        toast.info(`Already have "${t.name}" — it will sync automatically`);
+        setImportCode(""); setShowImportCode(false);
+        return;
+      }
+      const cloned: Tournament = { ...t, id: t.id ?? crypto.randomUUID(), sharedFrom: code, updatedAt: new Date().toISOString() };
       const updated = [cloned, ...existing];
       saveTournaments(updated);
       setTournaments(updated);
       setImportCode(""); setShowImportCode(false);
-      toast.success(`"${t.name}" imported!`);
+      toast.success(`"${t.name}" imported! Changes will sync back to the owner.`);
     } catch { toast.error("Import failed"); }
     finally { setImportLoading(false); }
   };
 
 
+
+  /** True when this tournament was imported via share code and cannot be deleted */
+  const isCollab = (t: Tournament) => !!(t.sharedFrom || t.name?.endsWith('(imported)'));
 
   const handleDelete = (id: string) => { if (!tournament) return; save({ ...tournament, teams: tournament.teams.filter((t) => t.id !== id) }); toast.success("Removed"); };
   const addRow = () => setInputs([...inputs.map((r) => ({ ...r, showPhone: false })), { name: "", phone: "", players: "", showPhone: false }]);
@@ -878,7 +953,7 @@ export default function TeamsPage() {
         <section>
           <div className="flex items-center gap-2 mb-3">
             <div className="w-1 h-4 rounded-full" style={{ background: "#7c3aed" }} />
-            <span className="text-sm font-bold text-white flex-1">All Tournaments</span>
+            <span className="text-sm font-bold text-white flex-1">Tournaments</span>
             <button
               onClick={() => syncStatus === 'unauthed' ? (window.location.href = '/login') : handleSync()}
               disabled={syncStatus === 'syncing'}
@@ -895,14 +970,53 @@ export default function TeamsPage() {
               {syncStatus === 'syncing' ? "Syncing…" : syncStatus === 'pending' ? "Saving…" : syncStatus === 'offline' ? "Offline" : syncStatus === 'unauthed' ? "Session expired" : syncStatus === 'synced' ? "Synced" : "Sync"}
             </button>
           </div>
-          {tournaments.length === 0 && (
-            <div className="text-center py-20">
-              <p className="text-sm font-medium" style={{ color: "rgba(167,139,250,0.4)" }}>No tournaments yet</p>
-              <p className="text-xs mt-1" style={{ color: "rgba(167,139,250,0.25)" }}>Tap + Create to get started</p>
-            </div>
-          )}
+
+          {/* Mine / Shared tabs */}
+          {(() => {
+            const mineCount   = tournaments.filter(t => !isCollab(t)).length;
+            const sharedCount = tournaments.filter(t =>  isCollab(t)).length;
+            return (
+              <div className="flex gap-1 mb-3 p-0.5 rounded-lg" style={{ background: "rgba(124,58,237,0.08)", border: "1px solid rgba(124,58,237,0.14)", display: "inline-flex" }}>
+                {([['mine', 'Mine', mineCount], ['shared', 'Shared', sharedCount]] as const).map(([tab, label, count]) => (
+                  <button
+                    key={tab}
+                    onClick={() => setTournamentTab(tab)}
+                    className="flex items-center gap-1 px-3 py-1 rounded-md text-[11px] font-bold transition-all"
+                    style={{
+                      background: tournamentTab === tab ? "rgba(124,58,237,0.35)" : "transparent",
+                      color: tournamentTab === tab ? "#c4b5fd" : "rgba(167,139,250,0.4)",
+                    }}
+                  >
+                    {label}
+                    {count > 0 && (
+                      <span className="px-1 rounded-full text-[9px] font-black"
+                        style={{ background: tournamentTab === tab ? "rgba(124,58,237,0.5)" : "rgba(124,58,237,0.2)", color: "#c4b5fd" }}>
+                        {count}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
+
+          {(() => {
+            const visible = tournaments.filter(t => tournamentTab === 'shared' ? isCollab(t) : !isCollab(t));
+            if (visible.length === 0) return (
+              <div className="text-center py-16">
+                <p className="text-sm font-medium" style={{ color: "rgba(167,139,250,0.4)" }}>
+                  {tournamentTab === 'shared' ? 'No shared tournaments' : 'No tournaments yet'}
+                </p>
+                <p className="text-xs mt-1" style={{ color: "rgba(167,139,250,0.25)" }}>
+                  {tournamentTab === 'shared' ? 'Import a tournament using a 6-char code' : 'Tap + Create to get started'}
+                </p>
+              </div>
+            );
+            return null;
+          })()}
+
           <div className="space-y-3">
-            {tournaments.map((t, i) => {
+            {tournaments.filter(t => tournamentTab === 'shared' ? isCollab(t) : !isCollab(t)).map((t, i) => {
               const isOpen = expandedCards.has(t.id);
               return (
                 <div key={t.id} className="rounded-2xl overflow-hidden"
@@ -929,13 +1043,23 @@ export default function TeamsPage() {
                         )}
                       </div>
                     </div>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); handleDeleteTournament(t.id); }}
-                      className="p-1.5 rounded-lg transition-colors active:scale-90 shrink-0"
-                      style={{ color: "rgba(124,58,237,0.5)" }}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    {isCollab(t) ? (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setCollabDeleteId(t.id); }}
+                        className="p-1.5 rounded-lg transition-colors active:scale-90 shrink-0"
+                        style={{ color: "rgba(124,58,237,0.5)" }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    ) : (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleDeleteTournament(t.id); }}
+                        className="p-1.5 rounded-lg transition-colors active:scale-90 shrink-0"
+                        style={{ color: "rgba(124,58,237,0.5)" }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
                   </div>
 
                   {/* Pill section — smoothly animated via CSS grid rows */}
@@ -1792,7 +1916,7 @@ export default function TeamsPage() {
                     setAddForm({ name: "", slot: String((tournament?.teams.length ?? 0) + 1), tags: "", phone: "" });
                     setPlayerInputs([""]);
                     setAddScreenTab("add");
-                    setAddScreenTab("add"); setAddScreenMode("edit");
+                    setAddScreenMode("edit");
                     setInitialTeamCount(tournament?.teams.length ?? 0);
                     setAddScreenSnapshot({ teamCount: tournament?.teams.length ?? 0, entryFee: tournament?.entryFee ?? 0, isActive: tournament?.isActive ?? false });
                     setShowAddScreen(true);
@@ -2254,6 +2378,35 @@ export default function TeamsPage() {
           </div>
         </div>
       )}
+
+      {/* COLLAB LOCAL DELETE CONFIRM */}
+      {collabDeleteId && (
+        <div className="fixed inset-0 z-[80] flex items-end justify-center p-4" style={{ background: "rgba(0,0,0,0.7)" }} onClick={() => setCollabDeleteId(null)}>
+          <div className="w-full max-w-sm rounded-3xl p-6 anim-slide-up" style={{ background: "#13092b", border: "1px solid rgba(239,68,68,0.25)" }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex flex-col items-center gap-2 mb-4">
+              <div className="h-11 w-11 rounded-2xl flex items-center justify-center" style={{ background: "rgba(239,68,68,0.12)" }}>
+                <Trash2 className="h-5 w-5" style={{ color: "#f87171" }} />
+              </div>
+              <p className="text-base font-bold text-white">Remove shared tournament?</p>
+            </div>
+            <p className="text-sm text-center mb-5" style={{ color: "rgba(196,181,253,0.5)" }}>
+              This will only delete it <span className="text-white font-semibold">for you</span>. The original tournament won&apos;t be affected.
+            </p>
+            <button
+              onClick={() => {
+                handleDeleteTournament(collabDeleteId);
+                setCollabDeleteId(null);
+              }}
+              className="w-full py-3.5 rounded-xl font-bold text-sm text-white press-scale mb-2"
+              style={{ background: "rgba(239,68,68,0.2)", border: "1px solid rgba(239,68,68,0.3)", color: "#f87171" }}
+            >
+              Delete for me
+            </button>
+            <button onClick={() => setCollabDeleteId(null)} className="w-full py-2.5 rounded-xl text-sm font-medium" style={{ color: "rgba(196,181,253,0.4)" }}>Keep it</button>
+          </div>
+        </div>
+      )}
+
       {/* ROOM INFO — WhatsApp group invite */}
       {showRoomInfo && tournament && (() => {
         const wasvg = <svg viewBox="0 0 24 24" className="h-4 w-4 fill-white shrink-0"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.127.558 4.126 1.534 5.859L0 24l6.335-1.518A11.96 11.96 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.818 9.818 0 01-5.003-1.371l-.36-.214-3.722.892.934-3.617-.236-.373A9.818 9.818 0 0112 2.182c5.418 0 9.818 4.4 9.818 9.818 0 5.419-4.4 9.818-9.818 9.818z"/></svg>;
