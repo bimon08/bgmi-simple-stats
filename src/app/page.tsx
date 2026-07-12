@@ -61,6 +61,7 @@ export default function TeamsPage() {
   const [editingTeam, setEditingTeam] = useState<Team | null>(null);
   const [editTeamForm, setEditTeamForm] = useState({ name: "", slot: "", tags: "", players: "", phone: "" });
   const [initialTeamCount, setInitialTeamCount] = useState(0);
+  const [addScreenSnapshot, setAddScreenSnapshot] = useState<{ teamCount: number; entryFee: number; isActive: boolean } | null>(null);
   const [showSlots, setShowSlots] = useState(false);
   const [showStandings, setShowStandings] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
@@ -99,6 +100,7 @@ export default function TeamsPage() {
   const [editingPlayerIdx, setEditingPlayerIdx] = useState<number | null>(null);
   const [showRoomInfo, setShowRoomInfo] = useState(false);
   const [showRulesModal, setShowRulesModal] = useState(false);
+  const [showBookings, setShowBookings] = useState(false);
   const [showPasteTip, setShowPasteTip] = useState(false);
   const [waGroupLink, setWaGroupLink] = useState("");
   const [waMessage, setWaMessage] = useState("");
@@ -324,10 +326,18 @@ export default function TeamsPage() {
       case "fraggers": setStandingsTab("fraggers"); setShowStandings(true); break;
       case "slots": setShowSlots(true); break;
       case "edit": setShowEdit(true); break;
-      case "room-info":
-        setWaGroupLink(tournament?.waGroup ?? "");
-        setWaMessage(tournament?.waMessage ?? `Hi *{team}*! 🎮\nJoin our scrim group:\n{link}`);
-        setShowRoomInfo(true); break;
+      case "bookings": setShowBookings(true); break;
+      case "room-info": {
+        const defaultMsg = `Hi *{team}*! 🎮\nPlease join this group to get ID and Password for *${t.name}*:\n{link}`;
+        const savedMsg = (t.waMessage ?? "")
+          .replace(/\*the tournament\*/g, `*${t.name}*`)
+          .replace(/for the tournament/g, `for *${t.name}*`)
+          .replace(/\bjilr\b|\bjillr\b/g, "join");
+        setWaGroupLink(t.waGroup ?? "");
+        setWaMessage(savedMsg || defaultMsg);
+        setShowRoomInfo(true);
+        break;
+      }
       case "rules":
         setRulesText((t.rules ?? []).join("\n"));
         setShowRulesModal(true); break;
@@ -343,6 +353,7 @@ export default function TeamsPage() {
     setCreateName(""); setRoundRobin(false); setShowCreate(false);
     setAddForm({ name: "", slot: String(t.teams.length + 1), tags: "", phone: "" });
     setAddScreenTab("add"); setAddScreenMode("create"); setShowAddScreen(true);
+    setAddScreenSnapshot({ teamCount: t.teams.length, entryFee: t.entryFee ?? 0, isActive: t.isActive ?? false });
   };
 
   const handleCloneCreate = (source: Tournament) => {
@@ -356,6 +367,7 @@ export default function TeamsPage() {
     setShowCreate(false);
     setAddForm({ name: "", slot: String(t.teams.length + 1), tags: "", phone: "" });
     setAddScreenTab("add"); setAddScreenMode("create"); setShowAddScreen(true);
+    setAddScreenSnapshot({ teamCount: t.teams.length, entryFee: t.entryFee ?? 0, isActive: t.isActive ?? false });
     toast.success(`Cloned "${source.name}" — add more teams below`);
   };
 
@@ -367,13 +379,26 @@ export default function TeamsPage() {
 
   const handleAddTeamToScreen = () => {
     if (!tournament || !addForm.name.trim()) return;
+
+    // Duplicate phone check
+    const phoneDigits = addForm.phone.trim().replace(/\D/g, "");
+    if (phoneDigits) {
+      const dup = tournament.teams.find(
+        (t) => t.phone && t.phone.replace(/\D/g, "") === phoneDigits
+      );
+      if (dup) {
+        toast.error(`📵 ${phoneDigits} already registered under "${dup.name}"`);
+        return;
+      }
+    }
+
     const players = playerInputs.map((p) => p.trim()).filter(Boolean);
     const newTeam: Team = {
       id: crypto.randomUUID(),
       name: addForm.name.trim(),
       slot: addForm.slot ? Number(addForm.slot) : undefined,
       players: players.length > 0 ? uniquePlayers(players) : undefined,
-      phone: addForm.phone.trim() || undefined,
+      phone: phoneDigits || undefined,
       paid: true,
     };
     const updated = { ...tournament, teams: [...tournament.teams, newTeam] };
@@ -425,9 +450,11 @@ export default function TeamsPage() {
         continue;
       }
 
-      // Phone number detection — pick it up wherever it appears (usually line 3)
       if (!phone && isPhone(line)) {
-        phone = line.replace(/\s/g, '').trim(); // strip all spaces
+        let digits = line.replace(/\D/g, ''); // strip everything except digits
+        if (digits.length === 12 && digits.startsWith('91')) digits = digits.slice(2); // +91 country code
+        if (digits.length === 11 && digits.startsWith('0'))  digits = digits.slice(1); // leading 0
+        phone = digits;
         continue;
       }
 
@@ -489,16 +516,26 @@ export default function TeamsPage() {
   const handleDeleteTournament = (id: string) => { setTournaments((prev) => deleteTournamentById(id, prev)); toast.success("Deleted"); };
 
   const handleShare = async (t: Tournament) => {
+    // If tokens already cached locally → open instantly, no network call
+    if (t.shareToken && t.shortCode) {
+      const url = `${window.location.origin}/t/${t.shareToken}`;
+      setShareInfo({ code: t.shortCode, url, name: t.name });
+      setShowShareModal(true);
+      return;
+    }
+    // First time — fetch/generate tokens from server
     try {
       const res = await fetch(`/api/tournaments/${t.id}/share`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ data: t }), // always push latest data including geminiData
+        body: JSON.stringify({ data: t }),
       });
       if (!res.ok) { toast.error(res.status === 401 ? "Sign in to share" : "Share failed"); return; }
       const { token, shortCode } = await res.json();
       const url = `${window.location.origin}/t/${token}`;
-      navigator.clipboard.writeText(shortCode).catch(() => {});
+      // Cache tokens in local tournament data so next open is instant
+      const updated = { ...t, shareToken: token, shortCode };
+      save(updated);
       setShareInfo({ code: shortCode, url, name: t.name });
       setShowShareModal(true);
     } catch (e: unknown) {
@@ -730,13 +767,15 @@ export default function TeamsPage() {
 
   // Hide bottom nav when any sheet/modal is open
   const anyModalOpen = showCreate || showAdd || showAddScreen || showEdit || showStats || showStandings || showSlots || showPointSystem;
+  // Lock body scroll when any modal/overlay is open
   useEffect(() => {
     document.body.dataset.modal = anyModalOpen ? "open" : "";
-    return () => { document.body.dataset.modal = ""; };
+    document.body.style.overflow = anyModalOpen ? "hidden" : "";
+    return () => { document.body.dataset.modal = ""; document.body.style.overflow = ""; };
   }, [anyModalOpen]);
 
   return (
-    <div className="min-h-screen" style={{ background: "#0c0914" }} onPaste={handlePaste}>
+    <div className="min-h-screen pb-36" style={{ background: "#0c0914" }} onPaste={handlePaste}>
 
       {/* HEADER */}
       <div className="pt-6 pb-6 text-center px-4 anim-slide-up">
@@ -843,6 +882,7 @@ export default function TeamsPage() {
                           <Pill label="Certificate" onPress={() => openAction(t, "certificate")} />
                           <Pill label="Room Info" icon={<svg viewBox="0 0 24 24" className="h-3 w-3" fill="#25d366"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.127.558 4.126 1.534 5.859L0 24l6.335-1.518A11.96 11.96 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.818 9.818 0 01-5.003-1.371l-.36-.214-3.722.892.934-3.617-.236-.373A9.818 9.818 0 0112 2.182c5.418 0 9.818 4.4 9.818 9.818 0 5.419-4.4 9.818-9.818 9.818z"/></svg>} onPress={() => openAction(t, "room-info")} />
                           <Pill label="Rules" onPress={() => openAction(t, "rules")} />
+                         <Pill label={`Bookings${(t.isActive) ? " 🟢" : ""}`} onPress={() => openAction(t, "bookings")} />
                           <Pill label="Share" icon={<Share2 className="h-3 w-3" />} onPress={() => handleShare(t)} variant="share" />
                           <Pill label="Edit" icon={<Pencil className="h-3 w-3" />} onPress={() => openAction(t, "edit")} variant="edit" />
                         </div>
@@ -1113,6 +1153,19 @@ export default function TeamsPage() {
                           <p className="text-[10px] font-bold mb-1.5" style={{ color: "rgba(167,139,250,0.6)" }}>PASTE FORMAT</p>
                           <pre className="text-[11px] leading-5" style={{ color: "#c4b5fd", fontFamily: "monospace" }}>{`Team Name\nLeader Name\n1234567890\nPlayer 2\nPlayer 3\nPlayer 4`}</pre>
                           <p className="text-[9px] mt-2" style={{ color: "rgba(167,139,250,0.4)" }}>Copy from WhatsApp → tap Paste team block</p>
+                          <button
+                            onClick={() => {
+                              const msg = `Please send me\nTeam Name\nLeader Name\nLeader's phone number\nPlayer 2\nPlayer 3\nPlayer 4`;
+                              navigator.clipboard.writeText(msg).then(() => {
+                                setShowPasteTip(false);
+                                toast.success("Request template copied!");
+                              });
+                            }}
+                            className="mt-2.5 w-full py-1.5 rounded-lg text-[10px] font-bold press-scale"
+                            style={{ background: "rgba(124,58,237,0.2)", border: "1px solid rgba(124,58,237,0.35)", color: "#c4b5fd" }}
+                          >
+                            📋 Copy "Please send me…"
+                          </button>
                         </div>
                       )}
                     </div>
@@ -1243,9 +1296,43 @@ export default function TeamsPage() {
               {addScreenMode === "create" && (
                 <p className="text-xs text-center mb-3" style={{ color:"rgba(196,181,253,0.35)" }}>Click here to create a tournament with all your teams</p>
               )}
+              {/* Entry fee + active toggle */}
+              <div className="flex items-center gap-3 mb-3">
+                <div className="flex-1 flex items-center gap-2 px-3 py-2.5 rounded-xl" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                  <span className="text-xs font-bold shrink-0" style={{ color: "rgba(196,181,253,0.5)" }}>₹</span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={tournament.entryFee ?? ""}
+                    onChange={(e) => save({ ...tournament, entryFee: Number(e.target.value) || 0 })}
+                    placeholder="Entry fee"
+                    className="flex-1 bg-transparent text-sm text-white focus:outline-none w-0"
+                    style={{ caretColor: "#a78bfa" }}
+                  />
+                </div>
+                <button
+                  onClick={() => save({ ...tournament, isActive: !(tournament.isActive ?? false) })}
+                  className="flex items-center gap-2 px-3 py-2.5 rounded-xl shrink-0 press-scale"
+                  style={{
+                    background: tournament.isActive ? "rgba(37,211,102,0.15)" : "rgba(255,255,255,0.05)",
+                    border: `1px solid ${tournament.isActive ? "rgba(37,211,102,0.35)" : "rgba(255,255,255,0.08)"}`,
+                  }}
+                >
+                  <div className="h-4 w-4 rounded-full flex items-center justify-center" style={{ background: tournament.isActive ? "#25d366" : "rgba(255,255,255,0.2)" }}>
+                    <div className="h-1.5 w-1.5 rounded-full bg-white" />
+                  </div>
+                  <span className="text-xs font-bold" style={{ color: tournament.isActive ? "#4ade80" : "rgba(196,181,253,0.4)" }}>
+                    {tournament.isActive ? "Booking On" : "Booking Off"}
+                  </span>
+                </button>
+              </div>
               <button
-                onClick={() => { setShowAddScreen(false); toast.success(`Tournament "${tournament.name}" ${addScreenMode === "edit" ? "updated" : "ready"}!`); }}
-                disabled={addScreenMode === "edit" && teams.length === initialTeamCount}
+                onClick={() => { setShowAddScreen(false); toast.success(`Tournament "${tournament.name}" ${addScreenMode === "edit" ? "updated" : "ready"}!`); setAddScreenSnapshot(null); }}
+                disabled={addScreenMode === "edit" && addScreenSnapshot !== null && (
+                  teams.length === addScreenSnapshot.teamCount &&
+                  (tournament.entryFee ?? 0) === addScreenSnapshot.entryFee &&
+                  (tournament.isActive ?? false) === addScreenSnapshot.isActive
+                )}
                 className="w-full py-4 rounded-2xl font-bold text-white text-sm flex items-center justify-center gap-2 press-scale disabled:opacity-40 disabled:cursor-not-allowed"
                 style={{ background:"linear-gradient(135deg,#7c3aed,#a855f7)", boxShadow:"0 4px 28px rgba(124,58,237,0.5)" }}
               >
@@ -1634,6 +1721,7 @@ export default function TeamsPage() {
                     setAddScreenTab("add");
                     setAddScreenTab("add"); setAddScreenMode("edit");
                     setInitialTeamCount(tournament?.teams.length ?? 0);
+                    setAddScreenSnapshot({ teamCount: tournament?.teams.length ?? 0, entryFee: tournament?.entryFee ?? 0, isActive: tournament?.isActive ?? false });
                     setShowAddScreen(true);
                   }
                 },
@@ -2029,7 +2117,7 @@ export default function TeamsPage() {
 
             {/* Big code display */}
             <div className="rounded-2xl p-5 mb-4 text-center" style={{ background: "rgba(124,58,237,0.12)", border: "1px solid rgba(124,58,237,0.3)" }}>
-              <p className="text-xs mb-2" style={{ color: "rgba(196,181,253,0.5)" }}>Share code (copied!)</p>
+              <p className="text-xs mb-2" style={{ color: "rgba(196,181,253,0.5)" }}>Share code</p>
               <p className="text-4xl font-black tracking-[0.25em] text-white" style={{ fontFamily: "monospace" }}>{shareInfo.code}</p>
               <p className="text-[10px] mt-2" style={{ color: "rgba(196,181,253,0.4)" }}>Others can enter this code to import</p>
             </div>
@@ -2102,7 +2190,9 @@ export default function TeamsPage() {
         const sendToLeader = (team: typeof tournament.teams[number]) => {
           const clean = (team.phone ?? "").replace(/\D/g, "");
           if (!clean) return;
-          window.open(`https://wa.me/${clean}?text=${encodeURIComponent(buildMsg(team.name))}`, "_blank", "noopener,noreferrer");
+          // WhatsApp requires full international number (no +). Prepend 91 for 10-digit Indian numbers.
+          const waPhone = clean.length === 10 ? `91${clean}` : clean;
+          window.open(`https://wa.me/${waPhone}?text=${encodeURIComponent(buildMsg(team.name))}`, "_blank", "noopener,noreferrer");
           // Mark as sent
           const newSent = [...new Set([...sentIds, team.id])];
           const updated = { ...tournament, waGroup: waGroupLink.trim(), waMessage, waGroupSent: newSent };
@@ -2121,7 +2211,10 @@ export default function TeamsPage() {
                 {/* Group link */}
                 <div>
                   <p className="text-[10px] font-bold mb-1 uppercase" style={{ color: "rgba(167,139,250,0.45)" }}>Group Invite Link</p>
-                  <input value={waGroupLink} onChange={(e) => setWaGroupLink(e.target.value)}
+                  <input value={waGroupLink} onChange={(e) => {
+                      setWaGroupLink(e.target.value);
+                      save({ ...tournament, waGroup: e.target.value.trim(), waMessage } as typeof tournament & { waGroup: string; waMessage: string });
+                    }}
                     placeholder="https://chat.whatsapp.com/..."
                     className="w-full px-3 py-2.5 rounded-xl text-sm text-white focus:outline-none"
                     style={{ background: "rgba(37,211,102,0.08)", border: "1px solid rgba(37,211,102,0.2)", caretColor: "#25d366" }} />
@@ -2129,7 +2222,10 @@ export default function TeamsPage() {
                 {/* Message template */}
                 <div>
                   <p className="text-[10px] font-bold mb-1 uppercase" style={{ color: "rgba(167,139,250,0.45)" }}>Default Message <span style={{ color: "rgba(167,139,250,0.3)" }}>— use &#123;team&#125; and &#123;link&#125;</span></p>
-                  <textarea value={waMessage} onChange={(e) => setWaMessage(e.target.value)} rows={3}
+                  <textarea value={waMessage} onChange={(e) => {
+                      setWaMessage(e.target.value);
+                      save({ ...tournament, waGroup: waGroupLink.trim(), waMessage: e.target.value } as typeof tournament & { waGroup: string; waMessage: string });
+                    }} rows={3}
                     className="w-full px-3 py-2 rounded-xl text-sm resize-none focus:outline-none"
                     style={{ background: "rgba(124,58,237,0.08)", border: "1px solid rgba(124,58,237,0.2)", color: "#e9d5ff", caretColor: "#a78bfa" }} />
                 </div>
@@ -2156,7 +2252,8 @@ export default function TeamsPage() {
                       </div>
                       {hasPhone ? (
                         <button onClick={() => sendToLeader(team)}
-                          className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-white press-scale"
+                          disabled={!sent && !waGroupLink.trim()}
+                          className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-white press-scale disabled:opacity-30 disabled:cursor-not-allowed"
                           style={{ background: sent ? "rgba(37,211,102,0.2)" : "linear-gradient(135deg,#25d366,#128c7e)", border: sent ? "1px solid rgba(37,211,102,0.4)" : "none", color: sent ? "#4ade80" : "white" }}>
                           {sent ? "✓ Sent" : <>{wasvg} Send</>}
                         </button>
@@ -2175,7 +2272,76 @@ export default function TeamsPage() {
         );
       })()}
 
+      {/* BOOKINGS MODAL */}
+      {showBookings && tournament && (() => {
+        const BookingsModal = () => {
+          const [data, setData] = useState<{ bookings: { id: string; status: string; entryFee: number; wallet: { playerName: string; phone: string | null; balance: number } }[]; pending: number; confirmed: number; entryFee: number } | null>(null);
+          const [debiting, setDebiting] = useState(false);
+          useEffect(() => {
+            fetch(`/api/tournaments/${tournament.id}/bookings`).then(r => r.json()).then(setData);
+          }, []);
+          const debitAll = async () => {
+            setDebiting(true);
+            const res = await fetch(`/api/tournaments/${tournament.id}/bookings/debit`, { method: "POST" });
+            const json = await res.json();
+            setDebiting(false);
+            if (json.ok) {
+              toast.success(`Debited ₹${tournament.entryFee ?? 0} from ${json.debited} player${json.debited !== 1 ? "s" : ""}`);
+              fetch(`/api/tournaments/${tournament.id}/bookings`).then(r => r.json()).then(setData);
+            } else toast.error("Debit failed");
+          };
+          return (
+            <div className="fixed inset-0 z-[90] flex items-end justify-center p-4" style={{ background: "rgba(0,0,0,0.85)" }} onClick={() => setShowBookings(false)}>
+              <div className="w-full max-w-sm rounded-3xl anim-slide-up flex flex-col" style={{ background: "#13092b", border: "1px solid rgba(124,58,237,0.3)", maxHeight: "88dvh" }} onClick={e => e.stopPropagation()}>
+                <div className="px-6 pt-5 pb-4 shrink-0">
+                  <p className="text-[10px] font-bold tracking-widest text-center mb-1" style={{ color: "rgba(167,139,250,0.5)" }}>SLOT BOOKINGS</p>
+                  <p className="text-base font-bold text-white text-center">{tournament.name}</p>
+                  {data && (
+                    <div className="flex justify-center gap-4 mt-2">
+                      <span className="text-xs font-bold px-2 py-0.5 rounded-lg" style={{ background: "rgba(250,204,21,0.15)", color: "#fbbf24" }}>{data.pending} pending</span>
+                      <span className="text-xs font-bold px-2 py-0.5 rounded-lg" style={{ background: "rgba(37,211,102,0.12)", color: "#4ade80" }}>{data.confirmed} confirmed</span>
+                      {(tournament.entryFee ?? 0) > 0 && <span className="text-xs px-2 py-0.5 rounded-lg" style={{ background: "rgba(124,58,237,0.15)", color: "#c4b5fd" }}>₹{tournament.entryFee} each</span>}
+                    </div>
+                  )}
+                </div>
+                <div className="mx-6 h-px shrink-0" style={{ background: "rgba(124,58,237,0.12)" }} />
+                <div className="overflow-y-auto flex-1 px-4 py-3 space-y-2">
+                  {!data ? (
+                    <div className="flex justify-center py-8"><div className="h-5 w-5 rounded-full border-2 border-violet-700 border-t-violet-400 animate-spin" /></div>
+                  ) : data.bookings.length === 0 ? (
+                    <p className="text-center text-sm py-8" style={{ color: "rgba(167,139,250,0.3)" }}>No bookings yet</p>
+                  ) : data.bookings.map((b) => (
+                    <div key={b.id} className="flex items-center gap-3 px-3 py-2.5 rounded-2xl" style={{ background: b.status === "CONFIRMED" ? "rgba(37,211,102,0.06)" : "rgba(255,255,255,0.03)", border: `1px solid ${b.status === "CONFIRMED" ? "rgba(37,211,102,0.2)" : "rgba(255,255,255,0.06)"}` }}>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold truncate" style={{ color: b.status === "CONFIRMED" ? "#4ade80" : "white" }}>{b.wallet.playerName}</p>
+                        <p className="text-[11px] truncate" style={{ color: "rgba(167,139,250,0.4)" }}>{b.wallet.phone ?? "No number"}</p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="text-[11px] font-bold" style={{ color: b.status === "CONFIRMED" ? "#4ade80" : "#fbbf24" }}>{b.status}</p>
+                        <p className="text-[10px]" style={{ color: "rgba(167,139,250,0.4)" }}>Bal: ₹{b.wallet.balance}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="px-6 pb-5 pt-3 shrink-0 space-y-2">
+                  {data && data.pending > 0 && (
+                    <button onClick={debitAll} disabled={debiting}
+                      className="w-full py-3.5 rounded-xl font-bold text-sm text-white press-scale disabled:opacity-50 flex items-center justify-center gap-2"
+                      style={{ background: "linear-gradient(135deg,#dc2626,#ef4444)" }}>
+                      {debiting ? <><div className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" /> Debiting…</> : `⚡ Debit All ${data.pending} — ₹${(tournament.entryFee ?? 0) * data.pending}`}
+                    </button>
+                  )}
+                  <button onClick={() => setShowBookings(false)} className="w-full py-2 text-sm font-medium" style={{ color: "rgba(196,181,253,0.4)" }}>Close</button>
+                </div>
+              </div>
+            </div>
+          );
+        };
+        return <BookingsModal />;
+      })()}
+
       {/* RULES MODAL */}
+
       {showRulesModal && tournament && (
         <div className="fixed inset-0 z-[90] flex items-end justify-center p-4" style={{ background: "rgba(0,0,0,0.8)" }} onClick={() => setShowRulesModal(false)}>
           <div className="w-full max-w-sm rounded-3xl p-6 anim-slide-up" style={{ background: "#13092b", border: "1px solid rgba(124,58,237,0.3)" }} onClick={(e) => e.stopPropagation()}>

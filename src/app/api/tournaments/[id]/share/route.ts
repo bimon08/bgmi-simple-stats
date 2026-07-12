@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@root/auth";
 
 function makeShortCode(): string {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I to avoid confusion
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   return Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
 }
 
@@ -16,16 +16,21 @@ async function uniqueCode(): Promise<string> {
   throw new Error("Could not generate unique code");
 }
 
-// POST /api/tournaments/[id]/share — upserts latest tournament data + generates share token/code
+// POST /api/tournaments/[id]/share
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await params;
   const body = await req.json().catch(() => ({}));
-  const tournamentData = body.data; // latest data from client
+  const tournamentData = body.data;
 
   const row = await prisma.savedTournament.findFirst({ where: { id, userId: session.user.id } });
+
+  // If token already exists, return immediately — no DB write needed
+  if (row?.shareToken && row?.shortCode) {
+    return NextResponse.json({ token: row.shareToken, shortCode: row.shortCode });
+  }
 
   const token = row?.shareToken ?? crypto.randomUUID();
   const shortCode = row?.shortCode ?? await uniqueCode();
@@ -36,12 +41,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       data: {
         shareToken: token,
         shortCode,
-        // Always update data so share reflects the latest version
         ...(tournamentData ? { data: tournamentData } : {}),
       },
     });
   } else {
-    // First time syncing this tournament
     await prisma.savedTournament.create({
       data: { id, userId: session.user.id, data: tournamentData ?? {}, shareToken: token, shortCode },
     });

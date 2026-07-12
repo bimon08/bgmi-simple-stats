@@ -27,6 +27,8 @@ function WalletInner() {
   const [txnNote, setTxnNote] = useState("");
   const [txnType, setTxnType] = useState<"owe" | "paid">("owe");
   const [sort, setSort] = useState<"debt" | "credit" | "az">("debt");
+  const [txnLoading, setTxnLoading] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const PAGE_SIZE = 20;
@@ -59,7 +61,7 @@ function WalletInner() {
 
   // Click player → show detail instantly, then fetch transactions only
   const openWallet = async (w: Wallet) => {
-    router.replace(`/wallet?player=${w.id}`, { scroll: false });
+    router.push(`/wallet?player=${w.id}`, { scroll: false });
     setSelected({ ...w, transactions: [] }); // instant — shows balance/name right away
     setTxnsLoading(true);
     const res = await fetch(`/api/wallets/${w.id}`);
@@ -68,11 +70,24 @@ function WalletInner() {
     setTxnsLoading(false);
   };
 
+  // UI back arrow — replace so it doesn't add another history entry
   const closeWallet = () => {
     router.replace("/wallet", { scroll: false });
     setSelected(null);
     setShowTxn(false);
   };
+
+  // System back button — clear selected when URL drops the ?player= param
+  useEffect(() => {
+    const onPop = () => {
+      if (!window.location.search.includes("player=")) {
+        setSelected(null);
+        setShowTxn(false);
+      }
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
 
   const addWallet = async () => {
     if (!newName.trim() || !newPhone.trim()) return;
@@ -91,18 +106,22 @@ function WalletInner() {
     if (isNaN(amt) || amt <= 0) return;
     const finalAmt = txnType === "owe" ? -amt : amt;
     const note = txnNote.trim() || (txnType === "owe" ? "Entry Fee" : "Prize");
+    setTxnLoading(true);
     const res = await fetch(`/api/wallets/${selected.id}/transactions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ amount: finalAmt, note }) });
+    setTxnLoading(false);
     if (!res.ok) { toast.error("Failed"); return; }
-    toast.success("Added!");
+    toast.success(txnType === "owe" ? "Debited!" : "Credited!");
     setTxnAmount(""); setTxnNote(""); setShowTxn(false);
-    // Refresh transactions only
     const updated = await (await fetch(`/api/wallets/${selected.id}`)).json();
     setSelected(updated);
     fetch("/api/wallets").then(r => r.json()).then(setWallets);
   };
 
   const deleteTransaction = async (txnId: string) => {
+    if (!confirm("Delete this transaction?")) return;
+    setDeletingId(txnId);
     await fetch(`/api/transactions/${txnId}`, { method: "DELETE" });
+    setDeletingId(null);
     const updated = await (await fetch(`/api/wallets/${selected!.id}`)).json();
     setSelected(updated);
     fetch("/api/wallets").then(r => r.json()).then(setWallets);
@@ -231,7 +250,12 @@ function WalletInner() {
               className="w-full px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-sm text-white placeholder-zinc-600 focus:outline-none" />
             <div className="flex gap-2">
               <button onClick={() => setShowTxn(false)} className="flex-1 py-2 rounded-lg bg-zinc-800 text-xs text-zinc-400">Cancel</button>
-              <button onClick={addTransaction} className="flex-1 py-2 rounded-lg bg-amber-500 text-xs font-bold text-black">Add</button>
+              <button onClick={addTransaction} disabled={txnLoading || !txnAmount}
+                className="flex-1 py-2 rounded-lg text-xs font-bold text-white flex items-center justify-center gap-1.5 disabled:opacity-60 transition-all"
+                style={{ background: txnType === "owe" ? "#ef4444" : "#22c55e" }}>
+                {txnLoading ? <div className="h-3.5 w-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" /> : null}
+                {txnLoading ? "Saving…" : txnType === "owe" ? "Debit" : "Credit"}
+              </button>
             </div>
           </div>
         ) : (
@@ -250,7 +274,7 @@ function WalletInner() {
           ) : selected.transactions.length === 0 ? (
             <p className="text-xs text-zinc-600 text-center py-6">No transactions yet</p>
           ) : selected.transactions.map((t) => (
-            <div key={t.id} className="group flex items-center gap-3 px-3.5 py-2.5 rounded-xl bg-zinc-900/50 border border-zinc-800/50 hover:border-zinc-700/60 transition-all">
+            <div key={t.id} className="flex items-center gap-3 px-3.5 py-2.5 rounded-xl bg-zinc-900/50 border border-zinc-800/50 transition-all">
               <div className={`h-7 w-7 rounded-lg flex items-center justify-center shrink-0 ${t.amount < 0 ? "bg-red-500/15" : "bg-emerald-500/15"}`}>
                 {t.amount < 0 ? <TrendingDown className="h-3.5 w-3.5 text-red-400" /> : <TrendingUp className="h-3.5 w-3.5 text-emerald-400" />}
               </div>
@@ -259,8 +283,15 @@ function WalletInner() {
                 <p className="text-[10px] text-zinc-600">{new Date(t.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</p>
               </div>
               <span className={`text-sm font-bold shrink-0 ${t.amount < 0 ? "text-red-400" : "text-emerald-400"}`}>{t.amount > 0 ? "+" : ""}₹{t.amount}</span>
-              <button onClick={() => deleteTransaction(t.id)} className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-zinc-800 transition-all">
-                <Trash2 className="h-3 w-3 text-zinc-600" />
+              <button
+                onClick={() => deleteTransaction(t.id)}
+                disabled={deletingId === t.id}
+                className="shrink-0 h-7 w-7 rounded-lg flex items-center justify-center transition-all active:scale-90 disabled:opacity-50"
+                style={{ background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.2)" }}
+              >
+                {deletingId === t.id
+                  ? <div className="h-3 w-3 rounded-full border border-red-500 border-t-transparent animate-spin" />
+                  : <Trash2 className="h-3.5 w-3.5 text-red-400" />}
               </button>
             </div>
           ))}

@@ -94,4 +94,8 @@ export interface Tournament {
   waGroup?: string;               // WhatsApp group invite link
   waMessage?: string;             // Default message template ({team} and {link} placeholders)
   waGroupSent?: string[];         // teamIds that have been sent the invite
+  entryFee?: number;              // Entry fee per slot (₹)
+  isActive?: boolean;             // Whether booking is open for players
+  shareToken?: string;            // Cached UUID share token (for instant share open)
+  shortCode?: string;             // Cached 6-char short code
 }

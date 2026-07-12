@@ -33,6 +33,7 @@ model Wallet {
   balance      Int           @default(0)
   createdAt    DateTime      @default(now()) @map("created_at")
   transactions Transaction[]
+  bookings     SlotBooking[]
   user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("wallets")
@@ -50,13 +51,35 @@ model Transaction {
 }
 
 model SavedTournament {
-  id          String   @id
-  userId      String   @map("user_id")
+  id          String        @id
+  userId      String        @map("user_id")
   data        Json
-  shareToken  String?  @unique @map("share_token")
-  shortCode   String?  @unique @map("short_code")
-  updatedAt   DateTime @updatedAt @map("updated_at")
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shareToken  String?       @unique @map("share_token")
+  shortCode   String?       @unique @map("short_code")
+  editToken   String?       @unique @map("edit_token")
+  entryFee    Int           @default(0) @map("entry_fee")
+  isActive    Boolean       @default(false) @map("is_active")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+  bookings    SlotBooking[]
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("saved_tournaments")
 }
+
+model SlotBooking {
+  id            String          @id @default(uuid())
+  walletId      String          @map("wallet_id")
+  tournamentId  String          @map("tournament_id")
+  entryFee      Int             @map("entry_fee")
+  status        String          @default("PENDING")
+  bookedByAdmin Boolean         @default(false) @map("booked_by_admin")
+  roster        Json?
+  createdAt     DateTime        @default(now()) @map("created_at")
+  confirmedAt   DateTime?       @map("confirmed_at")
+  wallet        Wallet          @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  tournament    SavedTournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+
+  @@unique([walletId, tournamentId])
+  @@map("slot_bookings")
+}
+
