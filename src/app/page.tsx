@@ -2572,7 +2572,8 @@ export default function TeamsPage() {
       {/* BOOKINGS MODAL */}
       {showBookings && tournament && (() => {
         const BookingsModal = () => {
-          const [data, setData] = useState<{ bookings: { id: string; status: string; entryFee: number; wallet: { playerName: string; phone: string | null; balance: number } }[]; pending: number; confirmed: number; entryFee: number } | null>(null);
+          type BookingRow = { id: string; status: string; entryFee: number; wallet: { playerName: string; phone: string | null; balance: number } };
+          const [data, setData] = useState<{ bookings: BookingRow[]; pending: number; confirmed: number; entryFee: number } | null>(null);
           const [debiting, setDebiting] = useState(false);
           useEffect(() => {
             fetch(`/api/tournaments/${tournament.id}/bookings`).then(r => r.json()).then(setData);
@@ -2587,45 +2588,66 @@ export default function TeamsPage() {
               fetch(`/api/tournaments/${tournament.id}/bookings`).then(r => r.json()).then(setData);
             } else toast.error("Debit failed");
           };
+
+          // Normalize phone — last 10 digits for matching
+          const norm = (p?: string | null) => { const d = (p ?? "").replace(/\D/g, ""); return d.length > 10 ? d.slice(-10) : d; };
+          const bookingByPhone = new Map((data?.bookings ?? []).map(b => [norm(b.wallet.phone), b]));
+
+          const teams = tournament.teams;
+          const pendingCount   = teams.filter(t => bookingByPhone.get(norm(t.phone))?.status === "PENDING").length;
+          const confirmedCount = teams.filter(t => bookingByPhone.get(norm(t.phone))?.status === "CONFIRMED").length;
+
           return (
             <div className="fixed inset-0 z-[90] flex items-end justify-center p-4" style={{ background: "rgba(0,0,0,0.85)" }} onClick={() => setShowBookings(false)}>
               <div className="w-full max-w-sm rounded-3xl anim-slide-up flex flex-col" style={{ background: "#13092b", border: "1px solid rgba(124,58,237,0.3)", maxHeight: "88dvh" }} onClick={e => e.stopPropagation()}>
                 <div className="px-6 pt-5 pb-4 shrink-0">
                   <p className="text-[10px] font-bold tracking-widest text-center mb-1" style={{ color: "rgba(167,139,250,0.5)" }}>SLOT BOOKINGS</p>
                   <p className="text-base font-bold text-white text-center">{tournament.name}</p>
-                  {data && (
-                    <div className="flex justify-center gap-4 mt-2">
-                      <span className="text-xs font-bold px-2 py-0.5 rounded-lg" style={{ background: "rgba(250,204,21,0.15)", color: "#fbbf24" }}>{data.pending} pending</span>
-                      <span className="text-xs font-bold px-2 py-0.5 rounded-lg" style={{ background: "rgba(37,211,102,0.12)", color: "#4ade80" }}>{data.confirmed} confirmed</span>
-                      {(tournament.entryFee ?? 0) > 0 && <span className="text-xs px-2 py-0.5 rounded-lg" style={{ background: "rgba(124,58,237,0.15)", color: "#c4b5fd" }}>₹{tournament.entryFee} each</span>}
-                    </div>
-                  )}
+                  <div className="flex justify-center gap-3 mt-2 flex-wrap">
+                    <span className="text-xs font-bold px-2 py-0.5 rounded-lg" style={{ background: "rgba(250,204,21,0.15)", color: "#fbbf24" }}>{pendingCount} pending</span>
+                    <span className="text-xs font-bold px-2 py-0.5 rounded-lg" style={{ background: "rgba(37,211,102,0.12)", color: "#4ade80" }}>{confirmedCount} confirmed</span>
+                    <span className="text-xs px-2 py-0.5 rounded-lg" style={{ background: "rgba(255,255,255,0.06)", color: "rgba(196,181,253,0.5)" }}>{teams.length - pendingCount - confirmedCount} not booked</span>
+                    {(tournament.entryFee ?? 0) > 0 && <span className="text-xs px-2 py-0.5 rounded-lg" style={{ background: "rgba(124,58,237,0.15)", color: "#c4b5fd" }}>₹{tournament.entryFee} each</span>}
+                  </div>
                 </div>
                 <div className="mx-6 h-px shrink-0" style={{ background: "rgba(124,58,237,0.12)" }} />
                 <div className="overflow-y-auto flex-1 px-4 py-3 space-y-2">
                   {!data ? (
                     <div className="flex justify-center py-8"><div className="h-5 w-5 rounded-full border-2 border-violet-700 border-t-violet-400 animate-spin" /></div>
-                  ) : data.bookings.length === 0 ? (
-                    <p className="text-center text-sm py-8" style={{ color: "rgba(167,139,250,0.3)" }}>No bookings yet</p>
-                  ) : data.bookings.map((b) => (
-                    <div key={b.id} className="flex items-center gap-3 px-3 py-2.5 rounded-2xl" style={{ background: b.status === "CONFIRMED" ? "rgba(37,211,102,0.06)" : "rgba(255,255,255,0.03)", border: `1px solid ${b.status === "CONFIRMED" ? "rgba(37,211,102,0.2)" : "rgba(255,255,255,0.06)"}` }}>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-bold truncate" style={{ color: b.status === "CONFIRMED" ? "#4ade80" : "white" }}>{b.wallet.playerName}</p>
-                        <p className="text-[11px] truncate" style={{ color: "rgba(167,139,250,0.4)" }}>{b.wallet.phone ?? "No number"}</p>
+                  ) : teams.length === 0 ? (
+                    <p className="text-center text-sm py-8" style={{ color: "rgba(167,139,250,0.3)" }}>No teams registered</p>
+                  ) : teams.map((t, idx) => {
+                    const booking = bookingByPhone.get(norm(t.phone));
+                    const isConfirmed = booking?.status === "CONFIRMED";
+                    const isPending   = booking?.status === "PENDING";
+                    return (
+                      <div key={t.id} className="flex items-center gap-3 px-3 py-2.5 rounded-2xl"
+                        style={{
+                          background: isConfirmed ? "rgba(37,211,102,0.06)" : isPending ? "rgba(250,204,21,0.04)" : "rgba(255,255,255,0.03)",
+                          border: `1px solid ${isConfirmed ? "rgba(37,211,102,0.2)" : isPending ? "rgba(250,204,21,0.15)" : "rgba(255,255,255,0.06)"}`,
+                        }}>
+                        <div className="h-7 w-7 rounded-lg flex items-center justify-center shrink-0 text-[10px] font-black" style={{ background: "rgba(124,58,237,0.18)", color: "#a78bfa" }}>
+                          {String(idx + 1).padStart(2, "0")}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-bold truncate" style={{ color: isConfirmed ? "#4ade80" : "white" }}>{t.name}</p>
+                          <p className="text-[11px] truncate" style={{ color: "rgba(167,139,250,0.4)" }}>{t.phone ?? "No number"}</p>
+                        </div>
+                        <div className="shrink-0">
+                          {isConfirmed && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(37,211,102,0.15)", color: "#4ade80" }}>CONFIRMED</span>}
+                          {isPending   && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(250,204,21,0.15)", color: "#fbbf24" }}>PENDING</span>}
+                          {!booking    && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(255,255,255,0.06)", color: "rgba(196,181,253,0.3)" }}>NOT BOOKED</span>}
+                        </div>
                       </div>
-                      <div className="text-right shrink-0">
-                        <p className="text-[11px] font-bold" style={{ color: b.status === "CONFIRMED" ? "#4ade80" : "#fbbf24" }}>{b.status}</p>
-                        <p className="text-[10px]" style={{ color: "rgba(167,139,250,0.4)" }}>Bal: ₹{b.wallet.balance}</p>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 <div className="px-6 pb-5 pt-3 shrink-0 space-y-2">
-                  {data && data.pending > 0 && (
+                  {data && pendingCount > 0 && (
                     <button onClick={debitAll} disabled={debiting}
                       className="w-full py-3.5 rounded-xl font-bold text-sm text-white press-scale disabled:opacity-50 flex items-center justify-center gap-2"
                       style={{ background: "linear-gradient(135deg,#dc2626,#ef4444)" }}>
-                      {debiting ? <><div className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" /> Debiting…</> : `⚡ Debit All ${data.pending} — ₹${(tournament.entryFee ?? 0) * data.pending}`}
+                      {debiting ? <><div className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" /> Debiting…</> : `⚡ Debit All ${pendingCount} — ₹${(tournament.entryFee ?? 0) * pendingCount}`}
                     </button>
                   )}
                   <button onClick={() => setShowBookings(false)} className="w-full py-2 text-sm font-medium" style={{ color: "rgba(196,181,253,0.4)" }}>Close</button>
