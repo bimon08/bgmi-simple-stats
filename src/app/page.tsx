@@ -74,7 +74,7 @@ export default function TeamsPage() {
   const [showStats, setShowStats] = useState(false);
   const [inputs, setInputs] = useState<{ name: string; phone: string; players: string; showPhone: boolean }[]>([{ name: "", phone: "", players: "", showPhone: false }]);
   const [syncedPlayers, setSyncedPlayers] = useState<{ playerName: string; phone: string | null }[]>([]);
-  type SyncStatus = 'idle' | 'pending' | 'syncing' | 'offline' | 'synced';
+  type SyncStatus = 'idle' | 'pending' | 'syncing' | 'offline' | 'synced' | 'unauthed';
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
   const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showSyncPicker, setShowSyncPicker] = useState(false);
@@ -256,7 +256,8 @@ export default function TeamsPage() {
       const local = loadTournaments();
       // Pull → merge → push
       const pullRes = await fetch("/api/tournaments");
-      if (!pullRes.ok) throw new Error(pullRes.status === 401 ? "Sign in to sync" : "Sync failed");
+      if (pullRes.status === 401) { setSyncStatus('unauthed'); return; }
+      if (!pullRes.ok) throw new Error("Sync failed");
       const { tournaments: remote } = await pullRes.json() as { tournaments: Tournament[] };
       const remoteMap = new Map(remote.map((t: Tournament) => [t.id, t]));
       const localMap  = new Map(local.map((t) => [t.id, t]));
@@ -273,6 +274,7 @@ export default function TeamsPage() {
         method: "PUT", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tournaments: merged }),
       });
+      if (pushRes.status === 401) { setSyncStatus('unauthed'); return; }
       if (!pushRes.ok) throw new Error("Sync failed");
       saveTournaments(merged);
       setTournaments(merged);
@@ -412,66 +414,102 @@ export default function TeamsPage() {
     const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     if (lines.length < 2) return null;
 
-    // Strip leading bullet/number prefix: "1.", "1)", "(1)", "[1]", "#1", etc.
-    const stripBullet = (s: string) => s.replace(/^(?:\(?\[?#?\d+[\.\)\]\-]?\)?\s*)/u, '').trim();
-
-    // Is this line a phone number? Digits + optional +/spaces/dashes, 7–15 digits total
-    const isPhone = (s: string) => {
-      const digits = s.replace(/[\s\-\(\)\+]/g, '');
-      return /^\d{7,15}$/.test(digits);
+    // Normalize phone to last 10 digits (handles +91, 0-prefix, any country code)
+    const normalizePhone = (s: string) => {
+      const d = s.replace(/\D/g, '');
+      return d.length > 10 ? d.slice(-10) : d;
     };
 
-    // Section headers to skip entirely
-    const isHeader = (s: string) =>
-      /^(?:[Pp]layers?|[Rr]oster|[Mm]embers?|[Ss]quad|[Ll]eader|[Cc]aptain)\s*[:：\-]?\s*$/.test(s);
+    const isPhone = (s: string) => {
+      const d = s.replace(/\D/g, '');
+      return d.length >= 7 && d.length <= 15 && /^\d+$/.test(d);
+    };
 
-    // Explicit team-name label prefix
-    const teamLabelMatch = (s: string) =>
-      s.match(/^(?:[Tt]eam|[Nn]ame|[Ss]quad|[Cc]lan)\s*[:：\-]?\s*(.+)$/);
+    // Split on " or " → treat each part as a separate player slot
+    const splitOrAlts = (s: string) =>
+      s.split(/\s+or\s+/i).map(p => p.trim()).filter(Boolean);
 
+    // ── PASS 1: Look for explicitly labelled lines ──────────────────────────
+    // Handles formats like:
+    //   Team Name TSMent
+    //   Leader Name SUGARXDADDYz
+    //   Leader's phone number 8729811863
+    //   Player 2 TSMxSORRYbro   |   Player choke|god
     let teamName = '';
     let phone = '';
     let captain = '';
-    const playerLines: string[] = [];
+    const players: string[] = [];
+    let labeledHits = 0;
 
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
+    for (const line of lines) {
+      // Team Name <value>  /  Team: <value>  /  Squad <value>
+      const mTeam = line.match(/^(?:[Tt]eam\s+[Nn]ame|[Tt]eam|[Ss]quad|[Cc]lan)\s*[:：\-]?\s+(.+)$/u);
+      if (mTeam) { teamName = mTeam[1].trim(); labeledHits++; continue; }
 
-      // Explicit "Team …" label
-      const tl = teamLabelMatch(line);
-      if (tl) { teamName = tl[1].trim(); continue; }
+      // Leader Name / Leader's Name / Captain Name
+      const mLeader = line.match(/^[Ll]eader['s\u2019]*\s+[Nn]ame\s+(.+)$/u);
+      if (mLeader) {
+        const alts = splitOrAlts(mLeader[1].trim());
+        captain = alts[0]; // first alternative = primary leader
+        // remaining alts are extra players
+        alts.slice(1).forEach(p => { if (!isPhone(p)) players.push(p); });
+        labeledHits++; continue;
+      }
 
-      // Skip header-only lines
-      if (isHeader(line)) continue;
+      // Leader's phone number / Leader phone / Phone number
+      const mPhone = line.match(
+        /^(?:[Ll]eader(?:[''\u2019]s?|s)?\s+)?[Pp]hone(?:\s+[Nn]umber)?\s+(.+)$/u
+      );
+      if (mPhone && isPhone(mPhone[1].trim())) {
+        phone = normalizePhone(mPhone[1].trim()); labeledHits++; continue; }
 
-      // First line = team name
-      if (!teamName && playerLines.length === 0 && captain === '') {
-        teamName = line;
+      // Player <N?> <value>  /  Players <value>
+      const mPlayer = line.match(/^[Pp]layers?\s+(?:\d+\s+)?(.+)$/u);
+      if (mPlayer) {
+        splitOrAlts(mPlayer[1].trim())
+          .filter(p => !isPhone(p))
+          .forEach(p => { players.push(p); labeledHits++; });
         continue;
       }
 
+      // Bare phone line (e.g. "+91 8729811863" on its own)
       if (!phone && isPhone(line)) {
-        let digits = line.replace(/\D/g, ''); // strip everything except digits
-        if (digits.length === 12 && digits.startsWith('91')) digits = digits.slice(2); // +91 country code
-        if (digits.length === 11 && digits.startsWith('0'))  digits = digits.slice(1); // leading 0
-        phone = digits;
-        continue;
-      }
-
-      // First player = captain/leader
-      const stripped = stripBullet(line);
-      const playerName = stripped || line;
-      if (!captain) {
-        captain = playerName;
-        playerLines.push(playerName);
-      } else {
-        playerLines.push(playerName);
+        phone = normalizePhone(line); labeledHits++;
       }
     }
 
-    const players = [...new Set(playerLines)];
-    if (!teamName && !players.length) return null;
-    return { teamName, phone, captain, players };
+    // If we found structured labels, use label-mode result
+    if (labeledHits >= 2) {
+      // Combine captain + players (captain first, deduplicated)
+      const allPlayers = captain
+        ? [captain, ...players.filter(p => p !== captain)]
+        : players;
+      return { teamName, phone, captain: captain || allPlayers[0] || '', players: allPlayers };
+    }
+
+    // ── PASS 2: Fallback heuristic (plain list format) ──────────────────────
+    // First non-header line = team name; remaining lines = players/phone
+    const stripBullet = (s: string) => s.replace(/^(?:\(?#?\d+[\.\)\-]?\)?\s*)/u, '').trim();
+    const isHeader = (s: string) =>
+      /^(?:[Pp]layers?|[Rr]oster|[Mm]embers?|[Ss]quad|[Ll]eader|[Cc]aptain)\s*[:：\-]?\s*$/.test(s);
+
+    let fbTeamName = ''; let fbPhone = ''; let fbCaptain = '';
+    const fbPlayers: string[] = [];
+
+    for (const line of lines) {
+      if (isHeader(line)) continue;
+      if (!fbTeamName && fbPlayers.length === 0 && fbCaptain === '') { fbTeamName = line; continue; }
+      if (!fbPhone && isPhone(line)) {
+        fbPhone = normalizePhone(line); continue;
+      }
+      const name = stripBullet(line) || line;
+      if (!fbCaptain) { fbCaptain = name; fbPlayers.push(name); }
+      else { fbPlayers.push(name); }
+    }
+
+    const fbFinalPlayers = [...new Set(fbPlayers)];
+    if (!fbTeamName && !fbFinalPlayers.length) return null;
+    return { teamName: fbTeamName, phone: fbPhone, captain: fbCaptain, players: fbFinalPlayers };
   };
 
   const handleTeamNamePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
@@ -807,19 +845,19 @@ export default function TeamsPage() {
             <div className="w-1 h-4 rounded-full" style={{ background: "#7c3aed" }} />
             <span className="text-sm font-bold text-white flex-1">All Tournaments</span>
             <button
-              onClick={handleSync}
+              onClick={() => syncStatus === 'unauthed' ? (window.location.href = '/login') : handleSync()}
               disabled={syncStatus === 'syncing'}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold press-scale disabled:opacity-60 transition-all"
               style={{
-                background: syncStatus === 'offline' ? "rgba(251,146,60,0.15)" : "rgba(124,58,237,0.15)",
-                color: syncStatus === 'offline' ? "rgb(251,146,60)" : syncStatus === 'synced' ? "rgb(74,222,128)" : "rgba(167,139,250,0.8)",
-                border: `1px solid ${ syncStatus === 'offline' ? 'rgba(251,146,60,0.3)' : syncStatus === 'synced' ? 'rgba(74,222,128,0.3)' : 'rgba(124,58,237,0.2)'}`,
+                background: syncStatus === 'unauthed' ? "rgba(239,68,68,0.15)" : syncStatus === 'offline' ? "rgba(251,146,60,0.15)" : "rgba(124,58,237,0.15)",
+                color: syncStatus === 'unauthed' ? "rgb(248,113,113)" : syncStatus === 'offline' ? "rgb(251,146,60)" : syncStatus === 'synced' ? "rgb(74,222,128)" : "rgba(167,139,250,0.8)",
+                border: `1px solid ${ syncStatus === 'unauthed' ? 'rgba(239,68,68,0.3)' : syncStatus === 'offline' ? 'rgba(251,146,60,0.3)' : syncStatus === 'synced' ? 'rgba(74,222,128,0.3)' : 'rgba(124,58,237,0.2)'}`,
               }}
             >
               {syncStatus === 'syncing' || syncStatus === 'pending'
                 ? <div className={`h-3 w-3 rounded-full border-2 border-current border-t-transparent ${syncStatus === 'syncing' ? 'animate-spin' : 'animate-spin opacity-50'}`} />
                 : <RefreshCw className="h-3 w-3" />}
-              {syncStatus === 'syncing' ? "Syncing…" : syncStatus === 'pending' ? "Saving…" : syncStatus === 'offline' ? "Offline" : syncStatus === 'synced' ? "Synced" : "Sync"}
+              {syncStatus === 'syncing' ? "Syncing…" : syncStatus === 'pending' ? "Saving…" : syncStatus === 'offline' ? "Offline" : syncStatus === 'unauthed' ? "Session expired" : syncStatus === 'synced' ? "Synced" : "Sync"}
             </button>
           </div>
           {tournaments.length === 0 && (
