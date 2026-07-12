@@ -77,7 +77,6 @@ export default function TeamsPage() {
   type SyncStatus = 'idle' | 'pending' | 'syncing' | 'offline' | 'synced' | 'unauthed';
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
   const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const [showSyncPicker, setShowSyncPicker] = useState(false);
   const [syncPickerTarget, setSyncPickerTarget] = useState<number>(0); // which row we're picking for
   const [startSlot, setStartSlot] = useState(3);
@@ -145,14 +144,16 @@ export default function TeamsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [syncStatus]);
 
-  // Poll every 30s to pick up changes from collaborators
+  // Sync when tab comes back into focus (catches collaborator changes at no extra cost)
   useEffect(() => {
-    pollTimer.current = setInterval(() => {
-      if (navigator.onLine && (syncStatus === 'synced' || syncStatus === 'idle')) {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && navigator.onLine &&
+          (syncStatus === 'synced' || syncStatus === 'idle')) {
         doSync(false);
       }
-    }, 30_000);
-    return () => { if (pollTimer.current) clearInterval(pollTimer.current); };
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [syncStatus]);
 
