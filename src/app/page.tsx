@@ -1060,8 +1060,7 @@ export default function TeamsPage() {
                         value={addForm.name}
                         onChange={(e) => {
                           const v = e.target.value;
-                          if (v.includes('\n')) {
-                            // Mobile paste: text arrives via onChange with newlines
+                          if (v.includes('\n') || v.includes('\r')) {
                             const parsed = parseTeamPaste(v);
                             if (parsed) {
                               if (parsed.teamName) setAddForm((f) => ({ ...f, name: parsed.teamName, phone: parsed.phone || f.phone }));
@@ -1079,7 +1078,30 @@ export default function TeamsPage() {
                         style={{ caretColor:"#a78bfa" }}
                       />
                     </div>
-                    <p className="text-[9px] mt-2" style={{ color:"rgba(196,181,253,0.25)" }}>💡 Paste a full team block to auto-fill name &amp; players</p>
+                    {/* Paste team block button — most reliable on mobile */}
+                    <button
+                      onClick={async () => {
+                        try {
+                          const text = await navigator.clipboard.readText();
+                          if (!text.trim()) { toast.error("Clipboard is empty"); return; }
+                          const parsed = parseTeamPaste(text);
+                          if (parsed) {
+                            if (parsed.teamName) setAddForm((f) => ({ ...f, name: parsed.teamName, phone: parsed.phone || f.phone }));
+                            if (parsed.players.length > 0) setPlayerInputs(parsed.players);
+                            toast.success('Team pasted!');
+                          } else {
+                            // Single-line — just set as name
+                            setAddForm((f) => ({ ...f, name: text.trim() }));
+                          }
+                        } catch {
+                          toast.error("Allow clipboard access and try again");
+                        }
+                      }}
+                      className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold press-scale"
+                      style={{ background: "rgba(124,58,237,0.15)", color: "#c4b5fd", border: "1px solid rgba(124,58,237,0.2)" }}
+                    >
+                      <Clipboard className="h-3 w-3" /> Paste team block
+                    </button>
                   </div>                  {/* Phone — optional */}
                   <div className="rounded-2xl px-4 py-3.5 mb-3" style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.08)" }}>
                     <div className="flex items-center justify-between mb-1.5">
