@@ -473,13 +473,20 @@ export default function TeamsPage() {
       const mTeam = line.match(/^(?:[Tt]eam\s+[Nn]ame|[Tt]eam|[Ss]quad|[Cc]lan)\s*[:：\-]?\s+(.+)$/u);
       if (mTeam) { teamName = mTeam[1].trim(); labeledHits++; continue; }
 
-      // Leader Name / Leader's Name / Captain Name  ← structured
-      const mLeader = line.match(/^[Ll]eader['s\u2019]*\s+[Nn]ame\s+(.+)$/u);
+      // Leader Name / Leader's Name / Leader <name> / Captain <name>  ← structured
+      // Handles: "Leader Name Egocapt", "Leader's Name X", "Leader Egocapt" (no "Name")
+      const mLeader = line.match(/^(?:[Ll]eader['s\u2019]*|[Cc]aptain)\s+(?:[Nn]ame\s+)?(.+)$/u);
       if (mLeader) {
-        const alts = splitOrAlts(mLeader[1].trim());
-        captain = alts[0];
-        alts.slice(1).forEach(p => { if (!isPhone(p)) players.push(p); });
-        labeledHits++; hasStructuredLabel = true; continue;
+        const val = mLeader[1].trim();
+        // Skip if the captured value IS just "name" (bare "Leader Name" header line)
+        if (/^[Nn]ame\s*$/.test(val)) { /* header only, skip */ }
+        else {
+          const alts = splitOrAlts(val);
+          captain = alts[0];
+          alts.slice(1).forEach(p => { if (!isPhone(p)) players.push(p); });
+          labeledHits++; hasStructuredLabel = true;
+        }
+        continue;
       }
 
       // Leader's phone number / Leader phone / Phone number  ← structured if labelled
