@@ -12,6 +12,12 @@ import {
 import { toJpeg } from "html-to-image";
 import { toast } from "sonner";
 import { Team, Tournament, StandingRow, GeminiOutput, AssignedGroup, PointSystem, DEFAULT_BGMI_POINTS } from "@/lib/types";
+import CreateScreen from "./components/CreateScreen";
+import BookingsModal from "./components/BookingsModal";
+import TeamEditScreen from "./components/TeamEditScreen";
+import PointSystemModal from "./components/PointSystemModal";
+import EditSheet from "./components/EditSheet";
+import AddTeamsScreen from "./components/AddTeamsScreen";
 import SYNCED_PLAYERS from "@/data/players.json";
 
 import {
@@ -77,10 +83,11 @@ export default function TeamsPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [createName, setCreateName] = useState("");
   const [roundRobin, setRoundRobin] = useState(false);
+  const [clonedFromId, setClonedFromId] = useState<string | null>(null);
+  const [excludedCloneTeams, setExcludedCloneTeams] = useState<Set<string>>(new Set());
   const [showMore, setShowMore] = useState(false);
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
   const toggleCard = (id: string) => setExpandedCards((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  const [showAdd, setShowAdd] = useState(false);
   const [showAddScreen, setShowAddScreen] = useState(false);
   const [addScreenTab, setAddScreenTab] = useState<"add" | "entered">("add");
   const [addScreenMode, setAddScreenMode] = useState<"create" | "edit">("create");
@@ -100,7 +107,6 @@ export default function TeamsPage() {
   const [showMorePositions, setShowMorePositions] = useState(false);
   const [standingsTab, setStandingsTab] = useState<"table" | "warhead" | "fraggers">("table");
   const [showStats, setShowStats] = useState(false);
-  const [inputs, setInputs] = useState<{ name: string; phone: string; players: string; showPhone: boolean }[]>([{ name: "", phone: "", players: "", showPhone: false }]);
   const [syncedPlayers, setSyncedPlayers] = useState<{ playerName: string; phone: string | null }[]>([]);
   type SyncStatus = 'idle' | 'pending' | 'syncing' | 'offline' | 'synced' | 'unauthed';
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
@@ -126,6 +132,7 @@ export default function TeamsPage() {
   const [importLoading, setImportLoading] = useState(false);
   const [selectedMatch, setSelectedMatch] = useState<number | null>(null);
   const [editingPlayerIdx, setEditingPlayerIdx] = useState<number | null>(null);
+  const [showTeamDetails, setShowTeamDetails] = useState(false);
   const [showRoomInfo, setShowRoomInfo] = useState(false);
   const [showRulesModal, setShowRulesModal] = useState(false);
   const [showBookings, setShowBookings] = useState(false);
@@ -197,7 +204,7 @@ export default function TeamsPage() {
     const anyOpen =
       showCreate || showAddScreen || !!editingTeam ||
       showStats || showStandings || showSlots ||
-      showPointSystem || showAdd || showEdit ||
+      showPointSystem || showEdit ||
       showMore || showRename;
 
     if (anyOpen) {
@@ -211,7 +218,6 @@ export default function TeamsPage() {
       if (showStandings)  { setShowStandings(false); return; }
       if (showSlots)      { setShowSlots(false); return; }
       if (showPointSystem){ setShowPointSystem(false); return; }
-      if (showAdd)        { setShowAdd(false); return; }
       if (showAddScreen)  { setShowAddScreen(false); return; }
       if (showEdit)       { setShowEdit(false); return; }
       if (showMore)       { setShowMore(false); return; }
@@ -223,7 +229,7 @@ export default function TeamsPage() {
     return () => window.removeEventListener('popstate', onPop);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showCreate, showAddScreen, editingTeam, showStats, showStandings,
-      showSlots, showPointSystem, showAdd, showEdit, showMore, showRename]);
+      showSlots, showPointSystem, showEdit, showMore, showRename]);
 
   const computeStandings = (t: Tournament) => {
     if (!t.geminiData) { setStandings([]); return; }
@@ -327,11 +333,20 @@ export default function TeamsPage() {
             ownedMerged.push({
               ...base,
               teams: mergeTeams(base.teams ?? [], other.teams ?? []),
-              // Admin-intent fields: always prefer the LOCAL value so user
-              // changes (toggle booking on/off, entry fee edits) are never
-              // silently reverted by a stale remote copy.
-              isActive:  l.isActive  ?? r.isActive,
-              entryFee:  l.entryFee  ?? r.entryFee,
+              // For every admin-set field: local value wins over remote.
+              // Remote only fills in if local is completely absent (undefined).
+              // This ensures any intentional change on this device survives sync
+              // regardless of timestamp comparison edge-cases.
+              isActive:    l.isActive    ?? r.isActive,
+              entryFee:    l.entryFee    ?? r.entryFee,
+              rules:       l.rules       ?? r.rules,
+              roomInfo:    l.roomInfo    ?? r.roomInfo,
+              waGroup:     l.waGroup     ?? r.waGroup,
+              waMessage:   l.waMessage   ?? r.waMessage,
+              waGroupSent: l.waGroupSent ?? r.waGroupSent,
+              pointSystem: l.pointSystem ?? r.pointSystem,
+              geminiData:  l.geminiData  ?? r.geminiData,
+              assignments: l.assignments ?? r.assignments,
             });
           });
           if (ownedMerged.length > 0) {
@@ -489,8 +504,15 @@ export default function TeamsPage() {
   };
 
   const handleCloneCreate = (source: Tournament) => {
+    // Generate unique name: "Name (Copy)" → "Name (Copy-2)" → "Name (Copy-3)"
+    const existingNames = new Set(tournaments.map(t => t.name));
+    const baseName = source.name.replace(/ \(Copy(?:-\d+)?\)$/, ""); // strip any existing (Copy-N)
+    let copyName = `${baseName} (Copy)`;
+    let n = 2;
+    while (existingNames.has(copyName)) { copyName = `${baseName} (Copy-${n++})`; }
+
     const t: Tournament = {
-      ...createTournament(source.name + " (Copy)"),
+      ...createTournament(copyName),
       teams: source.teams.map((tm) => ({ ...tm, id: crypto.randomUUID() })),
       pointSystem: source.pointSystem,
     };
@@ -498,9 +520,10 @@ export default function TeamsPage() {
     setTournament(t);
     setShowCreate(false);
     setAddForm({ name: "", slot: String(t.teams.length + 1), tags: "", phone: "" });
-    setAddScreenTab("add"); setAddScreenMode("create"); setShowAddScreen(true);
+    setAddScreenTab("entered"); setAddScreenMode("create"); setShowAddScreen(true);
+    setClonedFromId(t.id);
     setAddScreenSnapshot({ teamCount: t.teams.length, entryFee: t.entryFee ?? 0, isActive: t.isActive ?? false });
-    toast.success(`Cloned "${source.name}" — add more teams below`);
+    toast.success(`Cloned "${source.name}" — review below`);
   };
 
   // Deduplicate player names case-insensitively, preserving first occurrence
@@ -512,16 +535,20 @@ export default function TeamsPage() {
   const handleAddTeamToScreen = () => {
     if (!tournament || !addForm.name.trim()) return;
 
-    // Duplicate phone check
+    // Phone is required for wallet auto-creation
     const phoneDigits = addForm.phone.trim().replace(/\D/g, "");
-    if (phoneDigits) {
-      const dup = tournament.teams.find(
-        (t) => t.phone && t.phone.replace(/\D/g, "") === phoneDigits
-      );
-      if (dup) {
-        toast.error(`📵 ${phoneDigits} already registered under "${dup.name}"`);
-        return;
-      }
+    if (!phoneDigits) {
+      toast.error("Leader phone is required");
+      return;
+    }
+
+    // Duplicate phone check
+    const dup = tournament.teams.find(
+      (t) => t.phone && t.phone.replace(/\D/g, "") === phoneDigits
+    );
+    if (dup) {
+      toast.error(`📵 ${phoneDigits} already registered under "${dup.name}"`);
+      return;
     }
 
     const players = playerInputs.map((p) => p.trim()).filter(Boolean);
@@ -530,11 +557,14 @@ export default function TeamsPage() {
       name: addForm.name.trim(),
       slot: addForm.slot ? Number(addForm.slot) : undefined,
       players: players.length > 0 ? uniquePlayers(players) : undefined,
-      phone: phoneDigits || undefined,
+      phone: phoneDigits,
       paid: true,
     };
     const updated = { ...tournament, teams: [...tournament.teams, newTeam] };
     save(updated);
+    // Auto-create leader wallet (captain name or team name)
+    const captainName = players[0] || newTeam.name;
+    upsertLeaderWallet(captainName, phoneDigits);
     setAddForm({ name: "", slot: String(updated.teams.length + 1), tags: "", phone: "" });
     setPlayerInputs([""]);
     toast.success(`"${newTeam.name}" added!`);
@@ -601,7 +631,7 @@ export default function TeamsPage() {
       // ── Phone label ─────────────────────────────────────────────────────────
       // Handles: "Phone number", "Phn -", "Ph -", "Leader's phone number"
       const mPhone = line.match(
-        /^(?:[Ll]eader(?:[''\u2019]s?|s)?\s+)?[Pp]h(?:one?|n)\s*(?:[Nn]umber\s*)?[-–:：]?\s+(.+)$/u
+        /^(?:[Ll]er(?:[''\u2019]s?|s)?\s+)?[Pp]h(?:one?|n)\s*(?:[Nn]umber\s*)?[-–:：]?\s+(.+)$/u
       );
       if (mPhone) {
         const raw = stripSep(mPhone[1].trim());
@@ -692,36 +722,34 @@ export default function TeamsPage() {
     toast.success('Team pasted!');
   };
 
-  const handleModalTeamPaste = (e: React.ClipboardEvent<HTMLInputElement>, rowIndex: number) => {
-    const text = e.clipboardData.getData('text');
-    const parsed = parseTeamPaste(text);
-    if (!parsed) return;
-    e.preventDefault();
-    const u = [...inputs];
-    if (parsed.teamName) u[rowIndex] = { ...u[rowIndex], name: parsed.teamName };
-    if (parsed.phone) u[rowIndex] = { ...u[rowIndex], phone: parsed.phone, showPhone: true };
-    if (parsed.players.length > 0) u[rowIndex] = { ...u[rowIndex], players: parsed.players.join(', ') };
-    setInputs(u);
-    toast.success('Team pasted!');
-  };
-
   const saveEditTeam = () => {
     if (!tournament || !editingTeam) return;
-    const updated = tournament.teams.map((t) =>
-      t.id === editingTeam.id
-        ? { ...t, name: editTeamForm.name.trim() || t.name, tags: editTeamForm.tags || undefined,
-            phone: editTeamForm.phone.trim() || t.phone,
-            players: editTeamForm.players.trim()
-              ? uniquePlayers(editTeamForm.players.split(/[,\n]+/).map((p) => p.trim()).filter(Boolean))
-              : t.players }
-        : t
-    );
+    const updatedTeam = {
+      ...editingTeam,
+      name: editTeamForm.name.trim() || editingTeam.name,
+      tags: editTeamForm.tags || undefined,
+      phone: editTeamForm.phone.trim() || editingTeam.phone,
+      players: editTeamForm.players.trim()
+        ? uniquePlayers(editTeamForm.players.split(/[,\n]+/).map((p) => p.trim()).filter(Boolean))
+        : editingTeam.players,
+    };
+    const updated = tournament.teams.map((t) => t.id === editingTeam.id ? updatedTeam : t);
     save({ ...tournament, teams: updated });
+    // Auto-upsert wallet when phone is present
+    if (updatedTeam.phone) {
+      const captainName = updatedTeam.players?.[0] || updatedTeam.name;
+      upsertLeaderWallet(captainName, updatedTeam.phone);
+    }
     setEditingTeam(null);
     toast.success('Team updated!');
   };
 
-  const handleDeleteTournament = (id: string) => { setTournaments((prev) => deleteTournamentById(id, prev)); toast.success("Deleted"); };
+  const handleDeleteTournament = (id: string) => {
+    setTournaments((prev) => deleteTournamentById(id, prev));
+    toast.success("Deleted");
+    // Also delete from server so it doesn't come back on refresh
+    fetch(`/api/tournaments/${id}`, { method: "DELETE" }).catch(() => {});
+  };
 
   const handleShare = async (t: Tournament) => {
     // If tokens already cached locally → open instantly, no network call
@@ -784,33 +812,15 @@ export default function TeamsPage() {
   const isCollab = (t: Tournament) => !!(t.sharedFrom || t.name?.endsWith('(imported)'));
 
   const handleDelete = (id: string) => { if (!tournament) return; save({ ...tournament, teams: tournament.teams.filter((t) => t.id !== id) }); toast.success("Removed"); };
-  const addRow = () => setInputs([...inputs.map((r) => ({ ...r, showPhone: false })), { name: "", phone: "", players: "", showPhone: false }]);
-  const removeRow = (i: number) => { if (inputs.length > 1) setInputs(inputs.filter((_, idx) => idx !== i)); };
-  const updateRow = (i: number, field: "name" | "phone" | "players", val: string) => { const u = [...inputs]; u[i] = { ...u[i], [field]: val }; setInputs(u); };
-  const togglePhone = (i: number) => { const u = [...inputs]; u[i] = { ...u[i], showPhone: !u[i].showPhone }; setInputs(u); };
-  const handleSave = () => {
-    if (!tournament) return;
-    const valid = inputs.filter((r) => r?.name?.trim());
-    if (valid.length === 0) return;
-    const phones = valid.map((r) => r.phone.trim()).filter(Boolean);
-    const dupPhone = phones.find((p, i) => phones.indexOf(p) !== i);
-    if (dupPhone) { toast.error(`Duplicate phone: ${dupPhone}`); return; }
-    const existingPhones = tournament.teams.map((t) => t.phone).filter(Boolean);
-    const conflict = valid.find((r) => r.phone.trim() && existingPhones.includes(r.phone.trim()));
-    if (conflict) { toast.error(`${conflict.phone} already used`); return; }
-    const newTeams: Team[] = valid.map((r) => ({
-      id: crypto.randomUUID(),
-      name: r.name.trim(),
-      phone: r.phone.trim() || undefined,
-      players: r.players.trim()
-        ? r.players.split(/[,\n]+/).map(p => p.trim()).filter(Boolean)
-        : undefined,
-      paid: true,
-    }));
-    save({ ...tournament, teams: [...tournament.teams, ...newTeams] });
-    setInputs([{ name: "", phone: "", players: "", showPhone: false }]); setShowAdd(false);
-    toast.success(`${newTeams.length} team${newTeams.length > 1 ? "s" : ""} added`);
+  /** Auto-create a leader wallet if one doesn't exist yet for that phone */
+  const upsertLeaderWallet = (playerName: string, phone: string) => {
+    fetch("/api/wallets/upsert", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ playerName, phone }),
+    }).catch(() => {}); // fire-and-forget, silently ignore errors
   };
+
 
   const copyPrompt = () => { if (!tournament) return; navigator.clipboard.writeText(generatePrompt(tournament.teams)); toast.success("Prompt copied!"); };
   const openGemini = () => {
@@ -960,7 +970,7 @@ export default function TeamsPage() {
   const toggleExpand = (g: string) => setExpandedGroups((p) => { const n = new Set(p); n.has(g) ? n.delete(g) : n.add(g); return n; });
   const assignedTeamIds = new Set(Object.values(assignments));
   const slotAssignments = tournament?.teams.map((t, i) => ({ ...t, slot: startSlot + i })) || [];
-  const validCount = inputs.filter((r) => r?.name?.trim()).length;
+
 
   const captureRef = useCallback(async (ref: React.RefObject<HTMLDivElement | null>, download = false, filename = "image") => {
     const el = ref.current; if (!el) return; setIsCapturing(true);
@@ -984,7 +994,7 @@ export default function TeamsPage() {
   }, []);
 
   // Hide bottom nav when any sheet/modal is open
-  const anyModalOpen = showCreate || showAdd || showAddScreen || showEdit || showStats || showStandings || showSlots || showPointSystem;
+  const anyModalOpen = showCreate || showAddScreen || showEdit || showStats || showStandings || showSlots || showPointSystem;
   // Lock body scroll when any modal/overlay is open
   useEffect(() => {
     document.body.dataset.modal = anyModalOpen ? "open" : "";
@@ -1104,13 +1114,13 @@ export default function TeamsPage() {
             {tournaments.filter(t => tournamentTab === 'shared' ? isCollab(t) : !isCollab(t)).map((t, i) => {
               const isOpen = expandedCards.has(t.id);
               return (
-                <div key={t.id} className="rounded-2xl overflow-hidden"
+                <div key={t.id} className="rounded-2xl overflow-hidden relative"
                   style={{ background: "#150e25", border: "1px solid rgba(124,58,237,0.18)", transition: "box-shadow 200ms" }}>
                   {/* Header row — div not button to avoid nested button error */}
                   <div
                     role="button"
                     tabIndex={0}
-                    className="w-full flex items-center gap-3 p-4 text-left press-scale cursor-pointer"
+                    className="w-full flex items-center gap-3 p-4 pr-12 text-left press-scale cursor-pointer"
                     onClick={() => toggleCard(t.id)}
                     onKeyDown={(e) => e.key === "Enter" && toggleCard(t.id)}
                   >
@@ -1128,24 +1138,25 @@ export default function TeamsPage() {
                         )}
                       </div>
                     </div>
-                    {isCollab(t) ? (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setCollabDeleteId(t.id); }}
-                        className="p-1.5 rounded-lg transition-colors active:scale-90 shrink-0"
-                        style={{ color: "rgba(124,58,237,0.5)" }}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    ) : (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleDeleteTournament(t.id); }}
-                        className="p-1.5 rounded-lg transition-colors active:scale-90 shrink-0"
-                        style={{ color: "rgba(124,58,237,0.5)" }}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    )}
                   </div>
+                  {/* Delete button — outside the header div, no bubbling risk */}
+                  {isCollab(t) ? (
+                    <button
+                      onClick={() => setCollabDeleteId(t.id)}
+                      className="absolute top-3 right-3 p-1.5 rounded-lg transition-colors active:scale-90"
+                      style={{ color: "rgba(124,58,237,0.5)" }}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => handleDeleteTournament(t.id)}
+                      className="absolute top-3 right-3 p-1.5 rounded-lg transition-colors active:scale-90"
+                      style={{ color: "rgba(124,58,237,0.5)" }}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  )}
 
                   {/* Pill section — smoothly animated via CSS grid rows */}
                   <div style={{
@@ -1201,880 +1212,103 @@ export default function TeamsPage() {
         </button>
       </div>
 
-      {/* CREATE SCREEN — full-screen overlay */}
+      {/* CREATE SCREEN */}
       {showCreate && (
-        <div className="fixed inset-0 z-50 flex flex-col anim-fade-in" style={{ background: "#0a0614" }}>
-          {/* Close button */}
-          <button
-            onClick={() => { setShowCreate(false); setCreateName(""); setRoundRobin(false); }}
-            className="absolute top-5 right-5 p-2 rounded-full press-scale"
-            style={{ background: "rgba(255,255,255,0.07)", color: "rgba(196,181,253,0.7)" }}
-          >
-            <X className="h-5 w-5" />
-          </button>
-
-          <div className="flex flex-col flex-1 overflow-y-auto px-6 pt-16 pb-10">
-            {/* Title */}
-            <h1
-              className="text-3xl mb-8 text-white"
-              style={{ fontFamily: "'Dancing Script', cursive", fontWeight: 700, letterSpacing: "0.01em" }}
-            >
-              Create a tournament
-            </h1>
-
-            {/* Name input */}
-            <div
-              className="flex items-center gap-3 px-4 py-3.5 rounded-2xl mb-5"
-              style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}
-            >
-              <Flag className="h-4 w-4 shrink-0" style={{ color: "rgba(196,181,253,0.55)" }} />
-              <input
-                autoFocus
-                value={createName}
-                onChange={(e) => setCreateName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && createName.trim()) handleCreate(); }}
-                placeholder="Enter Tourney Name"
-                className="flex-1 bg-transparent text-white text-sm focus:outline-none"
-                style={{ caretColor: "#a78bfa" }}
-              />
-            </div>
-
-            {/* Round Robin toggle + GO */}
-            <div className="flex items-center gap-3 mb-8">
-              {/* Toggle */}
-              <button
-                onClick={() => setRoundRobin((v) => !v)}
-                className="relative shrink-0 press-scale"
-                style={{ width: 48, height: 28 }}
-              >
-                <div
-                  className="absolute inset-0 rounded-full transition-colors duration-200"
-                  style={{ background: roundRobin ? "rgba(124,58,237,0.9)" : "rgba(255,255,255,0.15)" }}
-                />
-                <div
-                  className="absolute top-1 left-1 transition-transform duration-200 h-5 w-5 rounded-full bg-white shadow"
-                  style={{ transform: roundRobin ? "translateX(20px)" : "translateX(0)" }}
-                />
-              </button>
-              <span className="text-sm font-medium" style={{ color: roundRobin ? "#c4b5fd" : "rgba(196,181,253,0.5)" }}>
-                Round Robin
-              </span>
-              <button
-                onClick={handleCreate}
-                disabled={!createName.trim()}
-                className="ml-auto flex items-center gap-2 px-6 py-2.5 rounded-full text-sm font-bold text-white disabled:opacity-30 press-scale"
-                style={{ background: "linear-gradient(135deg,#7c3aed,#a855f7)" }}
-              >
-                GO <ArrowRight className="h-4 w-4" />
-              </button>
-            </div>
-
-            {/* OR divider */}
-            {tournaments.length > 0 && (
-              <>
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="flex-1 border-t" style={{ borderColor: "rgba(255,255,255,0.12)", borderStyle: "dashed" }} />
-                  <span className="text-xs font-semibold tracking-widest" style={{ color: "rgba(196,181,253,0.45)" }}>OR</span>
-                  <div className="flex-1 border-t" style={{ borderColor: "rgba(255,255,255,0.12)", borderStyle: "dashed" }} />
-                </div>
-                <p className="text-xs text-center italic mb-4" style={{ color: "rgba(196,181,253,0.4)" }}>Create from existing tourney</p>
-
-                {/* Existing tournaments list */}
-                <div className="space-y-2">
-                  {tournaments.map((t) => (
-                    <button
-                      key={t.id}
-                      onClick={() => handleCloneCreate(t)}
-                      className="w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl text-left press-scale transition-colors"
-                      style={{ background: "rgba(124,58,237,0.08)", border: "1px solid rgba(124,58,237,0.15)" }}
-                    >
-                      <div
-                        className="h-11 w-11 rounded-xl shrink-0 flex items-center justify-center"
-                        style={{ background: "rgba(124,58,237,0.2)", border: "1px solid rgba(124,58,237,0.3)" }}
-                      >
-                        <Trophy className="h-5 w-5" style={{ color: "#a78bfa" }} />
-                      </div>
-                      <div>
-                        <p className="text-sm font-semibold text-white leading-tight">{t.name}</p>
-                        <p className="text-xs mt-0.5" style={{ color: "rgba(196,181,253,0.5)" }}>
-                          Total teams: {String(t.teams.length).padStart(2, "0")}
-                        </p>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
+        <CreateScreen
+          tournaments={tournaments}
+          createName={createName}
+          setCreateName={setCreateName}
+          roundRobin={roundRobin}
+          setRoundRobin={setRoundRobin}
+          onClose={() => { setShowCreate(false); setCreateName(""); setRoundRobin(false); }}
+          onCreate={handleCreate}
+          onClone={handleCloneCreate}
+        />
       )}
-      {/* ADD TEAMS SCREEN — full page after create/clone */}
-      {showAddScreen && tournament && (() => {
-        const teams = tournament.teams;
-        const initials = (name: string) => name.slice(0, 1).toUpperCase();
-        const avatarColors = ["#7c3aed","#9333ea","#6d28d9","#8b5cf6","#a855f7"];
-        return (
-          <div className="fixed inset-0 z-[55] flex flex-col anim-fade-in" style={{ background: "#0d0820" }}>
-            {/* Title + optional close */}
-            <div className="px-6 pt-12 pb-3 shrink-0 relative text-center">
-              {addScreenMode === "edit" && (
-                <button onClick={() => setShowAddScreen(false)} className="absolute right-4 top-12 p-2 rounded-xl" style={{ background:"rgba(255,255,255,0.07)", color:"rgba(196,181,253,0.6)" }}>
-                  <X className="h-4 w-4" />
-                </button>
-              )}
-              <h1 className="text-2xl text-white" style={{ fontFamily:"'Dancing Script',cursive", fontWeight:700 }}>
-                {tournament.name}
-              </h1>
-            </div>
-
-            {/* Tabs */}
-            <div className="mx-6 mb-4 shrink-0 flex rounded-2xl overflow-hidden" style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(124,58,237,0.2)" }}>
-              {(["add","entered"] as const).map((tab) => (
-                <button key={tab} onClick={() => setAddScreenTab(tab)}
-                  className="flex-1 py-3 text-sm font-semibold capitalize flex items-center justify-center gap-2 transition-colors"
-                  style={{ color: addScreenTab === tab ? "#c4b5fd" : "rgba(196,181,253,0.4)",
-                    borderBottom: addScreenTab === tab ? "2px solid #8b5cf6" : "2px solid transparent" }}>
-                  {tab === "entered" ? "Entered" : "Add"}
-                  {tab === "entered" && teams.length > 0 && (
-                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ background:"#7c3aed", color:"#fff" }}>{teams.length}</span>
-                  )}
-                </button>
-              ))}
-            </div>
-
-            {/* Scrollable content */}
-            <div className="flex-1 overflow-y-auto px-6 pb-40">
-              {addScreenTab === "add" ? (
-                <>
-                  {/* Logo + Tags — 50/50, same height */}
-                  <div className="grid grid-cols-2 gap-3 mb-5">
-                    {/* Logo */}
-                    <div className="h-16 rounded-2xl flex flex-col items-center justify-center gap-1 overflow-hidden" style={{ background:"rgba(124,58,237,0.12)", border:"2px dashed rgba(124,58,237,0.35)" }}>
-                      <ImageIcon className="h-3.5 w-3.5" style={{ color:"#8b5cf6" }} />
-                      <p className="text-[8px] font-semibold text-white text-center leading-tight px-1">Upload Team Logo</p>
-                      <p className="text-[7px] text-center px-1" style={{ color:"rgba(196,181,253,0.35)" }}>Optional</p>
-                    </div>
-                    {/* Tags */}
-                    <div className="h-16 rounded-2xl px-3 flex flex-col justify-center" style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.08)" }}>
-                      <div className="flex items-center justify-between mb-1">
-                        <p className="text-[10px] font-bold tracking-widest" style={{ color:"rgba(139,92,246,0.7)" }}>TAGS</p>
-                        <div className="relative group">
-                          <HelpCircle className="h-3.5 w-3.5 cursor-help" style={{ color:"rgba(196,181,253,0.3)" }} />
-                          <div className="absolute right-0 bottom-5 w-48 text-[10px] leading-relaxed px-2.5 py-2 rounded-xl pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity z-10"
-                            style={{ background:"#1e1535", color:"rgba(196,181,253,0.8)", border:"1px solid rgba(124,58,237,0.25)" }}>
-                            Tags are searchable aliases — used in addition to the team name to search for a team.
-                          </div>
-                        </div>
-                      </div>
-                      <input
-                        value={addForm.tags}
-                        onChange={(e) => setAddForm((f) => ({ ...f, tags: e.target.value }))}
-                        placeholder="e.g. alpha, squad-1"
-                        className="w-full bg-transparent text-white text-xs focus:outline-none"
-                        style={{ caretColor:"#a78bfa" }}
-                      />
-                    </div>
-                  </div>
-                  <div className="rounded-2xl px-4 py-3.5 mb-3" style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.08)" }}>
-                    <p className="text-[10px] font-bold tracking-widest mb-1.5" style={{ color:"rgba(139,92,246,0.7)" }}>TEAM NAME</p>
-                    <div className="flex items-center gap-3">
-                      <UserPlus className="h-4 w-4 shrink-0" style={{ color:"rgba(196,181,253,0.4)" }} />
-                      <input
-                        value={addForm.name}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          if (v.includes('\n') || v.includes('\r')) {
-                            const parsed = parseTeamPaste(v);
-                            if (parsed) {
-                              if (parsed.teamName) setAddForm((f) => ({ ...f, name: parsed.teamName, phone: parsed.phone || f.phone }));
-                              if (parsed.players.length > 0) setPlayerInputs(parsed.players);
-                              toast.success('Team pasted!');
-                              return;
-                            }
-                          }
-                          setAddForm((f) => ({ ...f, name: v }));
-                        }}
-                        onKeyDown={(e) => { if (e.key === "Enter" && addForm.name.trim()) handleAddTeamToScreen(); }}
-                        onPaste={handleTeamNamePaste}
-                        placeholder="Enter team name"
-                        className="flex-1 bg-transparent text-white text-sm focus:outline-none"
-                        style={{ caretColor:"#a78bfa" }}
-                      />
-                    </div>
-                    {/* Paste button row */}
-                    <div className="relative flex items-center gap-2 mt-2">
-                      <button
-                        onClick={async () => {
-                          try {
-                            const text = await navigator.clipboard.readText();
-                            if (!text.trim()) { toast.error("Clipboard is empty"); return; }
-                            const parsed = parseTeamPaste(text);
-                            if (parsed) {
-                              if (parsed.teamName) setAddForm((f) => ({ ...f, name: parsed.teamName, phone: parsed.phone || f.phone }));
-                              if (parsed.players.length > 0) setPlayerInputs(parsed.players);
-                              toast.success('Team pasted!');
-                            } else {
-                              setAddForm((f) => ({ ...f, name: text.trim() }));
-                            }
-                          } catch {
-                            toast.error("Allow clipboard access and try again");
-                          }
-                        }}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold press-scale"
-                        style={{ background: "rgba(124,58,237,0.15)", color: "#c4b5fd", border: "1px solid rgba(124,58,237,0.2)" }}
-                      >
-                        <Clipboard className="h-3 w-3" /> Paste team block
-                      </button>
-                      <button
-                        onClick={() => setShowPasteTip((v) => !v)}
-                        className="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-black press-scale shrink-0"
-                        style={{ background: "rgba(124,58,237,0.12)", color: "rgba(167,139,250,0.5)", border: "1px solid rgba(124,58,237,0.15)" }}
-                      >?</button>
-                      {showPasteTip && (
-                        <div className="absolute left-0 top-full mt-1.5 z-10 rounded-2xl px-4 py-3 w-64" style={{ background: "#1a0d35", border: "1px solid rgba(124,58,237,0.3)", boxShadow: "0 8px 24px rgba(0,0,0,0.5)" }}>
-                          <p className="text-[10px] font-bold mb-1.5" style={{ color: "rgba(167,139,250,0.6)" }}>PASTE FORMAT</p>
-                          <pre className="text-[11px] leading-5" style={{ color: "#c4b5fd", fontFamily: "monospace" }}>{`Team Name\nLeader Name\n1234567890\nPlayer 2\nPlayer 3\nPlayer 4`}</pre>
-                          <p className="text-[9px] mt-2" style={{ color: "rgba(167,139,250,0.4)" }}>Copy from WhatsApp → tap Paste team block</p>
-                          <button
-                            onClick={() => {
-                              const msg = `Please send me\nTeam Name\nLeader Name\nLeader's phone number\nPlayer 2\nPlayer 3\nPlayer 4`;
-                              navigator.clipboard.writeText(msg).then(() => {
-                                setShowPasteTip(false);
-                                toast.success("Request template copied!");
-                              });
-                            }}
-                            className="mt-2.5 w-full py-1.5 rounded-lg text-[10px] font-bold press-scale"
-                            style={{ background: "rgba(124,58,237,0.2)", border: "1px solid rgba(124,58,237,0.35)", color: "#c4b5fd" }}
-                          >
-                            📋 Copy "Please send me…"
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>                  {/* Phone — optional */}
-                  <div className="rounded-2xl px-4 py-3.5 mb-3" style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.08)" }}>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <p className="text-[10px] font-bold tracking-widest" style={{ color:"rgba(139,92,246,0.7)" }}>LEADER PHONE</p>
-                      <span className="text-[9px]" style={{ color:"rgba(196,181,253,0.3)" }}>Optional</span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <Phone className="h-4 w-4 shrink-0" style={{ color:"rgba(196,181,253,0.4)" }} />
-                      <input
-                        type="tel"
-                        value={addForm.phone}
-                        onChange={(e) => setAddForm((f) => ({ ...f, phone: e.target.value }))}
-                        placeholder="e.g. +91 98765 43210"
-                        className="flex-1 bg-transparent text-white text-sm focus:outline-none"
-                        style={{ caretColor:"#a78bfa" }}
-                      />
-                    </div>
-                  </div>
-
-
-                  {/* Players */}
-                  <div className="rounded-2xl px-4 py-3.5 mb-5" style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.08)" }}>
-                    <p className="text-[10px] font-bold tracking-widest mb-2" style={{ color:"rgba(139,92,246,0.7)" }}>PLAYERS</p>
-                    <div className="space-y-2">
-                      {playerInputs.map((val, i) => (
-                        <div key={i} className="flex items-center gap-2">
-                          <input
-                            ref={(el) => { playerInputRefs.current[i] = el; }}
-                            value={val}
-                            onChange={(e) => { const u = [...playerInputs]; u[i] = e.target.value; setPlayerInputs(u); }}
-                            placeholder={`Player ${i + 1}`}
-                            className="flex-1 bg-transparent text-white text-sm focus:outline-none border-b"
-                            style={{ caretColor:"#a78bfa", borderColor:"rgba(124,58,237,0.2)" }}
-                          />
-                          {playerInputs.length > 1 && (
-                            <button onClick={() => setPlayerInputs(playerInputs.filter((_, idx) => idx !== i))} className="shrink-0 p-0.5" style={{ color:"rgba(196,181,253,0.35)" }}>
-                              <X className="h-3.5 w-3.5" />
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                    <button
-                      onClick={() => {
-                        const newInputs = [...playerInputs, ""];
-                        setPlayerInputs(newInputs);
-                        // Focus the new input in the same gesture to keep keyboard open
-                        requestAnimationFrame(() => {
-                          playerInputRefs.current[newInputs.length - 1]?.focus();
-                        });
-                      }}
-                      className="mt-3 flex items-center gap-1.5 text-xs font-semibold press-scale"
-                      style={{ color:"rgba(139,92,246,0.8)" }}
-                    >
-                      <Plus className="h-3.5 w-3.5" /> Add player
-                    </button>
-                  </div>
-
-                  {/* Add Team button */}
-                  <button
-                    onClick={handleAddTeamToScreen}
-                    disabled={!addForm.name.trim()}
-                    className="w-full py-4 rounded-2xl font-bold text-white text-sm flex items-center justify-center gap-2 press-scale disabled:opacity-40"
-                    style={{ background:"linear-gradient(135deg,#6d28d9,#9333ea)", boxShadow:"0 4px 24px rgba(109,40,217,0.4)" }}
-                  >
-                    <Users className="h-4 w-4" />+ Add Team
-                  </button>
-                </>
-              ) : (
-                /* Entered tab */
-                <div className="space-y-2">
-                  {teams.length === 0 ? (
-                    <p className="text-center text-sm mt-10" style={{ color:"rgba(196,181,253,0.35)" }}>No teams added yet</p>
-                  ) : teams.map((team, idx) => (
-                    <button key={team.id} onClick={() => { setEditingTeam(team); setEditTeamForm({ name: team.name, slot: String(team.slot ?? ""), tags: "", players: (team.players ?? []).join(", "), phone: team.phone ?? "" }); }} className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-left press-scale" style={{ background:"rgba(124,58,237,0.08)", border:"1px solid rgba(124,58,237,0.15)" }}>
-                      <div className="h-9 w-9 rounded-xl flex items-center justify-center shrink-0 text-white text-xs font-bold" style={{ background: avatarColors[idx % avatarColors.length] }}>
-                        {initials(team.name)}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-white truncate">{team.name}</p>
-                        {team.players && team.players.length > 0 && (
-                          <p className="text-xs truncate" style={{ color:"rgba(196,181,253,0.45)" }}>{team.players.join(", ")}</p>
-                        )}
-                      </div>
-                      {team.slot && <span className="text-xs font-bold shrink-0" style={{ color:"rgba(139,92,246,0.7)" }}>#{team.slot}</span>}
-                      {/* Paid toggle */}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (!tournament) return;
-                          const updated = { ...tournament, teams: tournament.teams.map((t) => t.id === team.id ? { ...t, paid: !t.paid } : t) };
-                          save(updated);
-                        }}
-                        className="shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold press-scale"
-                        style={team.paid !== false
-                          ? { background: "rgba(34,197,94,0.15)", color: "#4ade80", border: "1px solid rgba(34,197,94,0.3)" }
-                          : { background: "rgba(239,68,68,0.12)", color: "#f87171", border: "1px solid rgba(239,68,68,0.25)" }}
-                      >
-                        {team.paid !== false ? "✓ PAID" : "✗ UNPD"}
-                      </button>
-                      <ChevronDown className="h-3.5 w-3.5 -rotate-90 shrink-0" style={{ color:"rgba(196,181,253,0.3)" }} />
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Sticky bottom — team counter + CREATE/UPDATE TOURNEY */}
-            <div className="absolute bottom-0 left-0 right-0 px-6 pb-8 pt-4 shrink-0" style={{ background:"linear-gradient(to top,#0d0820 70%,transparent)" }}>
-              {addScreenMode === "create" && teams.length > 0 && (
-                <div className="flex items-center gap-2 mb-3 justify-center">
-                  {teams.slice(0, 3).map((t, i) => (
-                    <div key={t.id} className="h-8 w-8 rounded-full border-2 border-[#0d0820] flex items-center justify-center text-[10px] font-bold text-white" style={{ background: avatarColors[i % avatarColors.length], marginLeft: i > 0 ? -10 : 0, zIndex: 3 - i }}>
-                      {initials(t.name)}
-                    </div>
-                  ))}
-                  {teams.length > 3 && (
-                    <div className="h-8 w-8 rounded-full border-2 border-[#0d0820] flex items-center justify-center text-[10px] font-bold text-white" style={{ background:"#6d28d9", marginLeft:-10 }}>
-                      +{teams.length - 3}
-                    </div>
-                  )}
-                  <span className="text-sm ml-2" style={{ color:"rgba(196,181,253,0.6)" }}>{teams.length} team{teams.length !== 1 ? "s" : ""} added</span>
-                </div>
-              )}
-              {addScreenMode === "create" && (
-                <p className="text-xs text-center mb-3" style={{ color:"rgba(196,181,253,0.35)" }}>Click here to create a tournament with all your teams</p>
-              )}
-              {/* Entry fee + active toggle */}
-              <div className="flex items-center gap-3 mb-3">
-                <div className="flex-1 flex items-center gap-2 px-3 py-2.5 rounded-xl" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
-                  <span className="text-xs font-bold shrink-0" style={{ color: "rgba(196,181,253,0.5)" }}>₹</span>
-                  <input
-                    type="number"
-                    min={0}
-                    value={tournament.entryFee ?? ""}
-                    onChange={(e) => save({ ...tournament, entryFee: Number(e.target.value) || 0 })}
-                    placeholder="Entry fee"
-                    className="flex-1 bg-transparent text-sm text-white focus:outline-none w-0"
-                    style={{ caretColor: "#a78bfa" }}
-                  />
-                </div>
-                <button
-                  onClick={() => save({ ...tournament, isActive: !(tournament.isActive ?? false) })}
-                  className="flex items-center gap-2 px-3 py-2.5 rounded-xl shrink-0 press-scale"
-                  style={{
-                    background: tournament.isActive ? "rgba(37,211,102,0.15)" : "rgba(255,255,255,0.05)",
-                    border: `1px solid ${tournament.isActive ? "rgba(37,211,102,0.35)" : "rgba(255,255,255,0.08)"}`,
-                  }}
-                >
-                  <div className="h-4 w-4 rounded-full flex items-center justify-center" style={{ background: tournament.isActive ? "#25d366" : "rgba(255,255,255,0.2)" }}>
-                    <div className="h-1.5 w-1.5 rounded-full bg-white" />
-                  </div>
-                  <span className="text-xs font-bold" style={{ color: tournament.isActive ? "#4ade80" : "rgba(196,181,253,0.4)" }}>
-                    {tournament.isActive ? "Booking On" : "Booking Off"}
-                  </span>
-                </button>
-              </div>
-              <button
-                onClick={() => { setShowAddScreen(false); toast.success(`Tournament "${tournament.name}" ${addScreenMode === "edit" ? "updated" : "ready"}!`); setAddScreenSnapshot(null); }}
-                disabled={addScreenMode === "edit" && addScreenSnapshot !== null && (
-                  teams.length === addScreenSnapshot.teamCount &&
-                  (tournament.entryFee ?? 0) === addScreenSnapshot.entryFee &&
-                  (tournament.isActive ?? false) === addScreenSnapshot.isActive
-                )}
-                className="w-full py-4 rounded-2xl font-bold text-white text-sm flex items-center justify-center gap-2 press-scale disabled:opacity-40 disabled:cursor-not-allowed"
-                style={{ background:"linear-gradient(135deg,#7c3aed,#a855f7)", boxShadow:"0 4px 28px rgba(124,58,237,0.5)" }}
-              >
-                <Trophy className="h-4 w-4" /> {addScreenMode === "edit" ? "UPDATE TOURNEY" : "CREATE TOURNEY"}
-              </button>
-            </div>
-          </div>
-        );
-      })()}
+      {/* ADD TEAMS SCREEN */}
+      {showAddScreen && tournament && (
+        <AddTeamsScreen
+          tournament={tournament}
+          addScreenTab={addScreenTab}
+          setAddScreenTab={setAddScreenTab}
+          addScreenMode={addScreenMode}
+          addScreenSnapshot={addScreenSnapshot}
+          addForm={addForm}
+          setAddForm={setAddForm}
+          playerInputs={playerInputs}
+          setPlayerInputs={setPlayerInputs}
+          playerInputRefs={playerInputRefs}
+          clonedFromId={clonedFromId}
+          setClonedFromId={setClonedFromId}
+          excludedCloneTeams={excludedCloneTeams}
+          setExcludedCloneTeams={setExcludedCloneTeams}
+          showPasteTip={showPasteTip}
+          setShowPasteTip={setShowPasteTip}
+          handleAddTeamToScreen={handleAddTeamToScreen}
+          handleTeamNamePaste={handleTeamNamePaste}
+          parseTeamPaste={parseTeamPaste}
+          handleDeleteTournament={handleDeleteTournament}
+          save={save}
+          setShowAddScreen={setShowAddScreen}
+          setShowCreate={setShowCreate}
+          setAddScreenSnapshot={setAddScreenSnapshot}
+        />
+      )}
 
       {/* TEAM EDIT SCREEN */}
-      {editingTeam && tournament && (() => {
-        const team = editingTeam;
-        const standing = tournament.geminiData?.groups.find((g) => {
-          const assignedId = tournament.assignments?.[g.group];
-          return assignedId === team.id;
-        });
-        const pp = standing?.totals.totalPlacementPoints ?? 0;
-        const kp = standing?.totals.totalKills ?? 0;
-        const tp = standing?.totals.totalPoints ?? 0;
-        const wins = standing?.totals.chickenDinners ?? 0;
-        const matchCount = standing?.matches.length ?? 0;
-        const statPill = (icon: React.ReactNode, label: string, val: number | string) => (
-          <div className="flex-1 min-w-0 flex items-center gap-2 px-3 py-2.5 rounded-2xl" style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.07)" }}>
-            <div className="h-7 w-7 rounded-full flex items-center justify-center shrink-0" style={{ background:"rgba(124,58,237,0.25)" }}>{icon}</div>
-            <div><p className="text-[9px] font-bold tracking-widest" style={{ color:"rgba(139,92,246,0.7)" }}>{label}</p><p className="text-sm font-bold text-white">{val}</p></div>
-          </div>
-        );
-        return (
-          <div className="fixed inset-0 z-[60] flex flex-col anim-fade-in" style={{ background:"#0d0820" }}>
-            {/* Top bar */}
-            <div className="flex items-center justify-between px-5 pt-12 pb-4 shrink-0">
-              <button onClick={() => setEditingTeam(null)} className="p-2 rounded-xl press-scale" style={{ background:"rgba(255,255,255,0.06)" }}>
-                <ChevronDown className="h-5 w-5 text-white rotate-90" />
-              </button>
-              <div className="flex items-center gap-2">
-                <button onClick={saveEditTeam} className="flex items-center gap-2 px-5 py-2 rounded-full font-semibold text-sm press-scale" style={{ background:"rgba(139,92,246,0.25)", border:"1px solid rgba(139,92,246,0.4)", color:"#c4b5fd" }}>
-                  <Save className="h-4 w-4" /> Save
-                </button>
-                <button onClick={() => { if (!tournament) return; save({ ...tournament, teams: tournament.teams.filter((t) => t.id !== team.id) }); setEditingTeam(null); toast.success('Team removed'); }} className="p-2 rounded-xl press-scale" style={{ background:"rgba(239,68,68,0.1)", color:"rgba(239,68,68,0.7)" }}>
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-            {/* Scrollable body */}
-            <div className="flex-1 overflow-y-auto px-5 pb-32">
-              {/* Update logo */}
-              <div className="flex flex-col items-center gap-1 mb-6">
-                <div className="h-16 w-16 rounded-2xl flex items-center justify-center" style={{ background:"rgba(124,58,237,0.12)", border:"2px dashed rgba(124,58,237,0.35)" }}>
-                  <Search className="h-6 w-6" style={{ color:"#8b5cf6" }} />
-                </div>
-                <p className="text-xs" style={{ color:"rgba(196,181,253,0.5)" }}>Update logo</p>
-              </div>
-              {/* Change name */}
-              <div className="flex items-center gap-4 mb-3">
-                <p className="text-sm font-medium w-28 shrink-0" style={{ color:"rgba(196,181,253,0.6)" }}>Change name</p>
-                <div className="flex-1 flex items-center gap-2 px-4 py-3 rounded-2xl" style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.08)" }}>
-                  <Pencil className="h-4 w-4 shrink-0" style={{ color:"rgba(196,181,253,0.4)" }} />
-                  <input value={editTeamForm.name} onChange={(e) => setEditTeamForm((f) => ({ ...f, name: e.target.value }))} className="flex-1 bg-transparent text-white text-sm focus:outline-none" style={{ caretColor:"#a78bfa" }} />
-                </div>
-              </div>
-              {/* Phone */}
-              <div className="flex items-center gap-4 mb-4">
-                <p className="text-sm font-medium w-28 shrink-0" style={{ color:"rgba(196,181,253,0.6)" }}>Phone</p>
-                <div className="flex-1 flex items-center gap-2 px-4 py-3 rounded-2xl" style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.08)" }}>
-                  <Phone className="h-4 w-4 shrink-0" style={{ color:"rgba(196,181,253,0.4)" }} />
-                  <input type="tel" value={editTeamForm.phone} onChange={(e) => setEditTeamForm((f) => ({ ...f, phone: e.target.value }))} placeholder="Leader phone (optional)" className="flex-1 bg-transparent text-white text-sm focus:outline-none" style={{ caretColor:"#a78bfa" }} />
-                </div>
-              </div>
-              {/* Tags */}
-              <div className="flex items-center gap-4 mb-4">
-                <p className="text-sm font-medium w-28 shrink-0" style={{ color:"rgba(196,181,253,0.6)" }}>Tags</p>
-                <div className="flex-1 flex items-center gap-2 px-4 py-3 rounded-2xl" style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.08)" }}>
-                  <Tag className="h-4 w-4 shrink-0" style={{ color:"rgba(196,181,253,0.4)" }} />
-                  <input value={editTeamForm.tags} onChange={(e) => setEditTeamForm((f) => ({ ...f, tags: e.target.value }))} placeholder="Tags" className="flex-1 bg-transparent text-white text-sm focus:outline-none" style={{ caretColor:"#a78bfa" }} />
-                </div>
-              </div>
-              {/* Paid toggle */}
-              <div className="flex items-center gap-4 mb-5">
-                <p className="text-sm font-medium w-28 shrink-0" style={{ color:"rgba(196,181,253,0.6)" }}>Payment</p>
-                <button
-                  onClick={() => {
-                    if (!tournament) return;
-                    const updated = { ...tournament, teams: tournament.teams.map((t) => t.id === editingTeam!.id ? { ...t, paid: !(editingTeam?.paid ?? true) } : t) };
-                    save(updated);
-                    setEditingTeam((prev) => prev ? { ...prev, paid: !(prev.paid ?? true) } : prev);
-                  }}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-2xl font-semibold text-sm press-scale"
-                  style={editingTeam?.paid !== false
-                    ? { background: "rgba(34,197,94,0.15)", color: "#4ade80", border: "1px solid rgba(34,197,94,0.3)" }
-                    : { background: "rgba(239,68,68,0.1)", color: "#f87171", border: "1px solid rgba(239,68,68,0.25)" }}
-                >
-                  {editingTeam?.paid !== false ? "✓ Paid" : "✗ Unpaid"} — tap to toggle
-                </button>
-              </div>
-              {/* Stats pills */}
-              <div className="space-y-2 mb-5">
-                <div className="flex gap-2">
-                  {statPill(<TrendingUp className="h-3.5 w-3.5" style={{ color:"#a78bfa" }} />, "PP", pp)}
-                  {statPill(<X className="h-3.5 w-3.5" style={{ color:"#a78bfa" }} />, "KP", kp)}
-                  {statPill(<BarChart2 className="h-3.5 w-3.5" style={{ color:"#a78bfa" }} />, "TP", tp)}
-                </div>
-                <div className="flex gap-2">
-                  {statPill(<Trophy className="h-3.5 w-3.5" style={{ color:"#a78bfa" }} />, "WIN", wins)}
-                  {statPill(<Hash className="h-3.5 w-3.5" style={{ color:"#a78bfa" }} />, "MP", matchCount)}
-                  {statPill(<ListOrdered className="h-3.5 w-3.5" style={{ color:"#a78bfa" }} />, "Slot", team.slot ?? "—")}
-                </div>
-              </div>
-              {/* Bonus / Penalty */}
-              <div className="grid grid-cols-2 gap-3 mb-5">
-                <button className="py-3.5 rounded-2xl text-sm font-semibold press-scale" style={{ background:"rgba(124,58,237,0.3)", color:"#e9d5ff" }}>Add bonus points</button>
-                <button className="py-3.5 rounded-2xl text-sm font-semibold press-scale" style={{ background:"rgba(255,255,255,0.06)", color:"rgba(196,181,253,0.7)" }}>Add penalty points</button>
-              </div>
-              {/* Edit match */}
-              <div className="rounded-2xl px-4 py-4 mb-4 text-center" style={{ background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.06)" }}>
-                <p className="text-sm font-semibold text-white mb-1">Edit match</p>
-                <p className="text-xs italic" style={{ color:"rgba(196,181,253,0.45)" }}>Once you do <strong className="text-white">Calculate</strong> the matches will appear here</p>
-              </div>
-              {/* Edit Players */}
-              <div className="rounded-2xl overflow-hidden mb-4" style={{ background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.06)" }}>
-                <p className="text-center text-sm font-semibold text-white py-3" style={{ borderBottom:"1px solid rgba(255,255,255,0.06)" }}>Edit Players</p>
-                {(team.players ?? []).map((player, pi) => (
-                  <div key={pi} className="flex items-center gap-3 px-4 py-2.5" style={{ borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
-                    <div className="h-8 w-8 rounded-xl flex items-center justify-center shrink-0" style={{ background:"rgba(124,58,237,0.15)", border:"1px solid rgba(124,58,237,0.2)" }}>
-                      <UserPlus className="h-3.5 w-3.5" style={{ color:"rgba(196,181,253,0.4)" }} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      {editingPlayerIdx === pi ? (
-                        <input
-                          autoFocus
-                          defaultValue={player}
-                          onBlur={(e) => {
-                            const val = e.target.value.trim();
-                            if (!tournament) return;
-                            const newPlayers = [...(team.players ?? [])];
-                            if (val) newPlayers[pi] = val; else newPlayers.splice(pi, 1);
-                            const updated = { ...tournament, teams: tournament.teams.map((t) => t.id === team.id ? { ...t, players: newPlayers } : t) };
-                            save(updated); setEditingTeam((prev) => prev ? { ...prev, players: newPlayers } : prev); setEditingPlayerIdx(null);
-                          }}
-                          onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                          className="w-full bg-transparent text-sm text-white focus:outline-none border-b border-violet-500/40"
-                        />
-                      ) : (
-                        <p className="text-sm font-semibold text-white truncate" onClick={() => setEditingPlayerIdx(pi)} style={{ cursor: "text" }}>{player}</p>
-                      )}
-                    </div>
-                    <button
-                      onClick={() => {
-                        if (!tournament) return;
-                        const newPlayers = (team.players ?? []).filter((_, i) => i !== pi);
-                        const updated = { ...tournament, teams: tournament.teams.map((t) => t.id === team.id ? { ...t, players: newPlayers } : t) };
-                        save(updated); setEditingTeam((prev) => prev ? { ...prev, players: newPlayers } : prev); setEditingPlayerIdx(null);
-                      }}
-                      className="p-1 shrink-0"
-                      style={{ color: "rgba(239,68,68,0.5)" }}
-                    ><Minus className="h-3.5 w-3.5" /></button>
-                  </div>
-                ))}
-                <button
-                  onClick={() => {
-                    if (!tournament) return;
-                    const newPlayers = [...(team.players ?? []), ""];
-                    const updated = { ...tournament, teams: tournament.teams.map((t) => t.id === team.id ? { ...t, players: newPlayers } : t) };
-                    save(updated); setEditingTeam((prev) => prev ? { ...prev, players: newPlayers } : prev);
-                    setEditingPlayerIdx(newPlayers.length - 1);
-                  }}
-                  className="w-full py-3 flex items-center justify-center gap-2 text-sm font-medium" style={{ color:"rgba(196,181,253,0.5)" }}>
-                  <Plus className="h-4 w-4" /> Add a player
-                </button>
-              </div>
-              <button className="w-full text-center text-sm font-semibold py-2" style={{ color:"#a78bfa" }}>Show team gfx</button>
-            </div>
-          </div>
-        );
-      })()}
+      {editingTeam && tournament && (
+        <TeamEditScreen
+          team={editingTeam}
+          tournament={tournament}
+          editTeamForm={editTeamForm}
+          setEditTeamForm={setEditTeamForm}
+          showTeamDetails={showTeamDetails}
+          setShowTeamDetails={setShowTeamDetails}
+          editingPlayerIdx={editingPlayerIdx}
+          setEditingPlayerIdx={setEditingPlayerIdx}
+          save={save}
+          onSave={saveEditTeam}
+          onClose={() => { setEditingTeam(null); setShowTeamDetails(false); }}
+        />
+      )}
 
       {/* ADD TEAMS MODAL */}
 
-      {showAdd && tournament && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center anim-fade-in" style={{ background: "rgba(0,0,0,0.8)" }} onClick={() => setShowAdd(false)}>
-          <div className="rounded-t-2xl sm:rounded-2xl w-full max-w-md shadow-2xl max-h-[80dvh] flex flex-col anim-sheet-up" style={{ background: "#150e25", border: "1px solid rgba(124,58,237,0.25)" }} onClick={(e) => e.stopPropagation()}>
-            {/* Drag handle + header — never scroll */}
-            <div className="px-5 pt-5 pb-4 shrink-0">
-              <div className="w-10 h-1 rounded-full mx-auto mb-4" style={{ background: "rgba(124,58,237,0.35)" }} />
-              <div className="flex items-center justify-between">
-                <h2 className="text-base font-bold text-white">Add Teams — {tournament.name}</h2>
-                <button onClick={() => setShowAdd(false)} className="p-1 rounded-lg hover:bg-zinc-800"><X className="h-4 w-4 text-zinc-400" /></button>
-              </div>
-            </div>
-            {/* Scrollable team rows */}
-            <div className="space-y-2.5 overflow-y-auto flex-1 px-5 pr-4">
-              {inputs.map((row, i) => (
-                <div key={i} className="space-y-1.5 pb-2" style={{ borderBottom: "1px solid rgba(124,58,237,0.08)" }}>
-                  <div className="flex items-center gap-2">
-                    <input value={row.name} onChange={(e) => {
-                      const v = e.target.value;
-                      if (v.includes('\n')) {
-                        const parsed = parseTeamPaste(v);
-                        if (parsed) {
-                          const u = [...inputs];
-                          if (parsed.teamName) u[i] = { ...u[i], name: parsed.teamName };
-                          if (parsed.phone) u[i] = { ...u[i], phone: parsed.phone, showPhone: true };
-                          if (parsed.players.length > 0) u[i] = { ...u[i], players: parsed.players.join(', ') };
-                          setInputs(u);
-                          toast.success('Team pasted!');
-                          return;
-                        }
-                      }
-                      updateRow(i, "name", v);
-                    }} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addRow(); setTimeout(() => { document.querySelectorAll<HTMLInputElement>("[data-team-input]")[inputs.length]?.focus(); }, 50); } }} onPaste={(e) => handleModalTeamPaste(e, i)} data-team-input autoFocus={i === inputs.length - 1} placeholder={`Team name`} maxLength={20} className="flex-1 px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-sm text-white placeholder-zinc-500 focus:border-violet-500/60 focus:outline-none transition-all" />
-                    {inputs.length > 1 && <button onClick={() => removeRow(i)} className="p-1 rounded-md hover:bg-zinc-800 shrink-0"><Minus className="h-3.5 w-3.5 text-zinc-500" /></button>}
-                  </div>
-                  <input
-                    value={row.players}
-                    onChange={(e) => updateRow(i, "players", e.target.value)}
-                    placeholder="Player names (comma separated)"
-                    list="players-list"
-                    className="w-full px-3 py-2 rounded-lg bg-zinc-800/60 border border-zinc-700/60 text-sm text-white placeholder-zinc-500 focus:border-violet-500/40 focus:outline-none transition-all"
-                  />
-                  <datalist id="players-list">
-                    {SYNCED_PLAYERS.map((p) => (
-                      <option key={p.playerName} value={p.playerName} />
-                    ))}
-                  </datalist>
-                </div>
-              ))}
-            </div>
-            {/* Sticky bottom — always visible above keyboard */}
-            <div className="px-5 pb-5 pt-3 shrink-0" style={{ borderTop: "1px solid rgba(124,58,237,0.1)" }}>
-              <button onClick={addRow} className="w-full py-2 rounded-lg border border-dashed border-zinc-600 text-xs text-zinc-400 hover:text-zinc-200 transition-all mb-3">+ Add another</button>
-              <div className="flex gap-2">
-                <button onClick={() => setShowAdd(false)} className="flex-1 px-4 py-2.5 rounded-lg text-sm font-medium text-zinc-300 bg-zinc-800 border border-zinc-700 hover:bg-zinc-700 transition-all">Cancel</button>
-                <button onClick={handleSave} disabled={validCount === 0} className="flex-1 px-4 py-2.5 rounded-lg text-sm font-bold text-white disabled:opacity-30 transition-all" style={{ background: "linear-gradient(135deg,#7c3aed,#9333ea)" }}>Add {validCount > 0 ? validCount : ""} Team{validCount !== 1 ? "s" : ""}</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* POINT SYSTEM MODAL */}
-      {showPointSystem && tournament && (() => {
-        // Ensure we always have a 100-slot array, pad with 0s
-        const pts100 = Array.from({ length: 100 }, (_, i) => editingPoints.positionPoints[i] ?? 0);
-        const setPos = (idx: number, val: number) => {
-          const updated = [...pts100]; updated[idx] = val;
-          setEditingPoints(p => ({ ...p, positionPoints: updated }));
-        };
-        const sliderStyle = (val: number, max: number) =>
-          ({ "--fill": `${(val / max) * 100}%` }) as React.CSSProperties;
-
-        return (
-          <div className="fixed inset-0 z-[60] overflow-y-auto" style={{ background: "#1a0d33" }}>
-            <div className="max-w-md mx-auto px-5 py-6">
-
-              {/* Header */}
-              <div className="flex items-center mb-8">
-                <button onClick={() => setShowPointSystem(false)} className="p-2 -ml-2 rounded-xl press-scale" style={{ color: "#a78bfa" }}>
-                  <ChevronDown className="h-6 w-6 rotate-90" />
-                </button>
-                <div className="flex-1 text-center">
-                  <p className="text-sm" style={{ color: "rgba(167,139,250,0.5)" }}>Choose your</p>
-                  <h1 className="text-xl font-black text-white">Point System</h1>
-                </div>
-                <div className="w-10" />
-              </div>
-
-              {/* Tab — BGMI only */}
-              <div className="flex gap-2 mb-8">
-                <div className="px-6 py-2 rounded-full text-sm font-bold text-white" style={{ border: "1.5px solid #a78bfa" }}>BGMI</div>
-              </div>
-
-              {/* Kills point */}
-              <div className="mb-8">
-                <p className="text-sm font-semibold text-white mb-4">Kills point</p>
-                <div className="flex items-center gap-4">
-                  <input
-                    type="range" min={0} max={10} step={1}
-                    value={editingPoints.killPoints}
-                    onChange={e => setEditingPoints(p => ({ ...p, killPoints: +e.target.value }))}
-                    className="pc-slider flex-1"
-                    style={sliderStyle(editingPoints.killPoints, 10)}
-                  />
-                  <span className="text-base font-black w-6 text-right shrink-0" style={{ color: "#c4b5fd" }}>{editingPoints.killPoints}</span>
-                </div>
-              </div>
-
-              {/* Position points — #1 to #8 always */}
-              <div className="mb-2">
-                <p className="text-sm font-semibold text-white mb-5">Position points</p>
-                <div className="space-y-5">
-                  {pts100.slice(0, 8).map((val, idx) => (
-                    <div key={idx} className="flex items-center gap-4">
-                      <span className="text-sm font-bold w-8 shrink-0" style={{ color: "rgba(167,139,250,0.65)" }}>#{idx + 1}</span>
-                      <input
-                        type="range" min={0} max={15} step={1}
-                        value={val}
-                        onChange={e => setPos(idx, +e.target.value)}
-                        className="pc-slider flex-1"
-                        style={sliderStyle(val, 15)}
-                      />
-                      <span className="text-base font-black w-7 text-right shrink-0" style={{ color: "#c4b5fd" }}>{val}</span>
-                    </div>
-                  ))}
-                </div>
-
-                {/* More positions — expandable #9-#100 */}
-                <button
-                  onClick={() => setShowMorePositions(m => !m)}
-                  className="flex items-center gap-2 mt-6 mb-1 press-scale"
-                  style={{ color: "#a78bfa" }}
-                >
-                  <ChevronDown className="h-4 w-4" style={{ transform: showMorePositions ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 280ms" }} />
-                  <span className="text-sm font-semibold">{showMorePositions ? "Hide" : "More"} positions (#9 – #100)</span>
-                </button>
-
-                <div style={{ display: "grid", gridTemplateRows: showMorePositions ? "1fr" : "0fr", transition: "grid-template-rows 300ms cubic-bezier(0.4,0,0.2,1)" }}>
-                  <div style={{ overflow: "hidden" }}>
-                    <div className="space-y-5 pt-4">
-                      {pts100.slice(8).map((val, i) => {
-                        const idx = i + 8;
-                        return (
-                          <div key={idx} className="flex items-center gap-4">
-                            <span className="text-sm font-bold w-8 shrink-0" style={{ color: "rgba(167,139,250,0.65)" }}>#{idx + 1}</span>
-                            <input
-                              type="range" min={0} max={15} step={1}
-                              value={val}
-                              onChange={e => setPos(idx, +e.target.value)}
-                              className="pc-slider flex-1"
-                              style={sliderStyle(val, 15)}
-                            />
-                            <span className="text-base font-black w-7 text-right shrink-0" style={{ color: "#c4b5fd" }}>{val}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Continue */}
-              <div className="mt-10">
-                <button
-                  onClick={() => {
-                    // Trim trailing zeros but keep min 8
-                    let trimmed = [...pts100];
-                    while (trimmed.length > 8 && trimmed[trimmed.length - 1] === 0) trimmed.pop();
-                    const updated = { ...tournament, pointSystem: { ...editingPoints, positionPoints: trimmed } };
-                    save(updated);
-                    setShowPointSystem(false);
-                    toast.success("Point system saved!");
-                  }}
-                  className="w-full py-4 rounded-2xl text-base font-bold text-white press-scale"
-                  style={{ background: "linear-gradient(135deg,#7c3aed,#9333ea)", boxShadow: "0 4px 20px rgba(124,58,237,0.4)" }}
-                >Continue</button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      {showPointSystem && tournament && (
+        <PointSystemModal
+          tournament={tournament}
+          editingPoints={editingPoints}
+          setEditingPoints={setEditingPoints}
+          showMorePositions={showMorePositions}
+          setShowMorePositions={setShowMorePositions}
+          save={save}
+          onClose={() => setShowPointSystem(false)}
+        />
+      )}
 
       {/* EDIT SHEET */}
       {showEdit && tournament && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center anim-fade-in" style={{ background: "rgba(0,0,0,0.75)" }} onClick={() => { setShowEdit(false); setShowRename(false); }}>
-          <div className="w-full max-w-md rounded-t-3xl flex flex-col anim-sheet-up" style={{ background: "#150e25", border: "1px solid rgba(124,58,237,0.2)", maxHeight: "85vh" }} onClick={e => e.stopPropagation()}>
-            {/* Handle + header */}
-            <div className="shrink-0 px-5 pt-3 pb-4" style={{ borderBottom: "1px solid rgba(124,58,237,0.12)" }}>
-              <div className="w-10 h-1 rounded-full mx-auto mb-4" style={{ background: "rgba(124,58,237,0.35)" }} />
-              <p className="text-base font-bold text-white">Edit — {tournament.name}</p>
-            </div>
-
-            {/* Scrollable body */}
-            <div className="overflow-y-auto flex-1">
-              {/* Action rows */}
-              {([
-                {
-                  icon: <Pen className="h-5 w-5" />, label: "Rename tournament", action: () => {
-                    setRenameValue(tournament.name);
-                    setShowRename(r => !r);
-                  }
-                },
-                {
-                  icon: <UserPlus className="h-5 w-5" />, label: "Edit teams", action: () => {
-                    setShowEdit(false);
-                    setAddForm({ name: "", slot: String((tournament?.teams.length ?? 0) + 1), tags: "", phone: "" });
-                    setPlayerInputs([""]);
-                    setAddScreenTab("add");
-                    setAddScreenMode("edit");
-                    setInitialTeamCount(tournament?.teams.length ?? 0);
-                    setAddScreenSnapshot({ teamCount: tournament?.teams.length ?? 0, entryFee: tournament?.entryFee ?? 0, isActive: tournament?.isActive ?? false });
-                    setShowAddScreen(true);
-                  }
-                },
-                { icon: <Pencil className="h-5 w-5" />, label: "Change point system", action: () => {
-                  setEditingPoints(tournament.pointSystem ?? DEFAULT_BGMI_POINTS);
-                  setShowEdit(false);
-                  setShowPointSystem(true);
-                }},
-                {
-                  icon: <ListX className="h-5 w-5" />, label: "Delete Points by match", action: () => {
-                    const updated = { ...tournament, geminiData: undefined, assignments: {} };
-                    save(updated);
-                    setShowEdit(false);
-                    toast.success("Match data cleared");
-                  }
-                },
-                {
-                  icon: <Trash2 className="h-5 w-5" />, label: "Delete tournament", danger: true, action: () => {
-                    handleDeleteTournament(tournament.id);
-                    setShowEdit(false);
-                  }
-                },
-              ] as { icon: React.ReactNode; label: string; danger?: boolean; action: () => void }[]).map((item, idx) => (
-                <div key={idx}>
-                  <button
-                    onClick={item.action}
-                    className="w-full flex items-center gap-4 px-5 py-4 text-left press-scale"
-                    style={{ borderBottom: "1px solid rgba(124,58,237,0.08)" }}
-                  >
-                    <span className="w-6 flex items-center justify-center shrink-0" style={{ color: item.danger ? "#f87171" : "rgba(196,181,253,0.7)" }}>{item.icon}</span>
-                    <span className="text-sm font-medium" style={{ color: item.danger ? "#f87171" : "#e2d9f3" }}>{item.label}</span>
-                  </button>
-                  {/* Inline rename input */}
-                  {item.label === "Rename tournament" && showRename && (
-                    <div className="px-5 pb-4 flex gap-2" onClick={e => e.stopPropagation()}>
-                      <input
-                        autoFocus
-                        value={renameValue}
-                        onChange={e => setRenameValue(e.target.value)}
-                        onKeyDown={e => {
-                          if (e.key === "Enter" && renameValue.trim()) {
-                            const updated = { ...tournament, name: renameValue.trim() };
-                            save(updated);
-                            setShowRename(false);
-                            toast.success("Renamed!");
-                          }
-                        }}
-                        className="flex-1 px-3 py-2 rounded-xl text-sm text-white focus:outline-none"
-                        style={{ background: "rgba(124,58,237,0.12)", border: "1px solid rgba(124,58,237,0.3)", caretColor: "#a78bfa" }}
-                        placeholder="New name..."
-                      />
-                      <button
-                        onClick={() => {
-                          if (!renameValue.trim()) return;
-                          const updated = { ...tournament, name: renameValue.trim() };
-                          save(updated);
-                          setShowRename(false);
-                          toast.success("Renamed!");
-                        }}
-                        className="px-4 py-2 rounded-xl text-sm font-bold text-white press-scale"
-                        style={{ background: "linear-gradient(135deg,#7c3aed,#9333ea)" }}
-                      >Save</button>
-                    </div>
-                  )}
-                </div>
-              ))}
-
-              <div className="h-8" />
-            </div>
-          </div>
-        </div>
+        <EditSheet
+          tournament={tournament}
+          save={save}
+          onClose={() => { setShowEdit(false); }}
+          onEditTeams={() => {
+            setAddForm({ name: "", slot: String((tournament?.teams.length ?? 0) + 1), tags: "", phone: "" });
+            setPlayerInputs([""]);
+            setAddScreenTab("add");
+            setAddScreenMode("edit");
+            setInitialTeamCount(tournament?.teams.length ?? 0);
+            setAddScreenSnapshot({ teamCount: tournament?.teams.length ?? 0, entryFee: tournament?.entryFee ?? 0, isActive: tournament?.isActive ?? false });
+            setShowAddScreen(true);
+          }}
+          onOpenPointSystem={() => {
+            setEditingPoints(tournament.pointSystem ?? DEFAULT_BGMI_POINTS);
+            setShowPointSystem(true);
+          }}
+          onDelete={handleDeleteTournament}
+        />
       )}
 
       {/* STATS / CALCULATE MODAL */}
@@ -2585,92 +1819,9 @@ export default function TeamsPage() {
 
       {/* BOOKINGS MODAL */}
       {showBookings && tournament && (() => {
-        const BookingsModal = () => {
-          type BookingRow = { id: string; status: string; entryFee: number; wallet: { playerName: string; phone: string | null; balance: number } };
-          const [data, setData] = useState<{ bookings: BookingRow[]; pending: number; confirmed: number; entryFee: number } | null>(null);
-          const [debiting, setDebiting] = useState(false);
-          useEffect(() => {
-            fetch(`/api/tournaments/${tournament.id}/bookings`).then(r => r.json()).then(setData);
-          }, []);
-          const debitAll = async () => {
-            setDebiting(true);
-            const res = await fetch(`/api/tournaments/${tournament.id}/bookings/debit`, { method: "POST" });
-            const json = await res.json();
-            setDebiting(false);
-            if (json.ok) {
-              toast.success(`Debited ₹${tournament.entryFee ?? 0} from ${json.debited} player${json.debited !== 1 ? "s" : ""}`);
-              fetch(`/api/tournaments/${tournament.id}/bookings`).then(r => r.json()).then(setData);
-            } else toast.error("Debit failed");
-          };
+        // kept as IIFE to satisfy tournament guard
+        return <BookingsModal tournament={tournament} save={save} onClose={() => setShowBookings(false)} />;
 
-          // Normalize phone — last 10 digits for matching
-          const norm = (p?: string | null) => { const d = (p ?? "").replace(/\D/g, ""); return d.length > 10 ? d.slice(-10) : d; };
-          const bookingByPhone = new Map((data?.bookings ?? []).map(b => [norm(b.wallet.phone), b]));
-
-          const teams = tournament.teams;
-          const pendingCount   = teams.filter(t => bookingByPhone.get(norm(t.phone))?.status === "PENDING").length;
-          const confirmedCount = teams.filter(t => bookingByPhone.get(norm(t.phone))?.status === "CONFIRMED").length;
-
-          return (
-            <div className="fixed inset-0 z-[90] flex items-end justify-center p-4" style={{ background: "rgba(0,0,0,0.85)" }} onClick={() => setShowBookings(false)}>
-              <div className="w-full max-w-sm rounded-3xl anim-slide-up flex flex-col" style={{ background: "#13092b", border: "1px solid rgba(124,58,237,0.3)", maxHeight: "88dvh" }} onClick={e => e.stopPropagation()}>
-                <div className="px-6 pt-5 pb-4 shrink-0">
-                  <p className="text-[10px] font-bold tracking-widest text-center mb-1" style={{ color: "rgba(167,139,250,0.5)" }}>SLOT BOOKINGS</p>
-                  <p className="text-base font-bold text-white text-center">{tournament.name}</p>
-                  <div className="flex justify-center gap-3 mt-2 flex-wrap">
-                    <span className="text-xs font-bold px-2 py-0.5 rounded-lg" style={{ background: "rgba(250,204,21,0.15)", color: "#fbbf24" }}>{pendingCount} pending</span>
-                    <span className="text-xs font-bold px-2 py-0.5 rounded-lg" style={{ background: "rgba(37,211,102,0.12)", color: "#4ade80" }}>{confirmedCount} confirmed</span>
-                    <span className="text-xs px-2 py-0.5 rounded-lg" style={{ background: "rgba(255,255,255,0.06)", color: "rgba(196,181,253,0.5)" }}>{teams.length - pendingCount - confirmedCount} not booked</span>
-                    {(tournament.entryFee ?? 0) > 0 && <span className="text-xs px-2 py-0.5 rounded-lg" style={{ background: "rgba(124,58,237,0.15)", color: "#c4b5fd" }}>₹{tournament.entryFee} each</span>}
-                  </div>
-                </div>
-                <div className="mx-6 h-px shrink-0" style={{ background: "rgba(124,58,237,0.12)" }} />
-                <div className="overflow-y-auto flex-1 px-4 py-3 space-y-2">
-                  {!data ? (
-                    <div className="flex justify-center py-8"><div className="h-5 w-5 rounded-full border-2 border-violet-700 border-t-violet-400 animate-spin" /></div>
-                  ) : teams.length === 0 ? (
-                    <p className="text-center text-sm py-8" style={{ color: "rgba(167,139,250,0.3)" }}>No teams registered</p>
-                  ) : teams.map((t, idx) => {
-                    const booking = bookingByPhone.get(norm(t.phone));
-                    const isConfirmed = booking?.status === "CONFIRMED";
-                    const isPending   = booking?.status === "PENDING";
-                    return (
-                      <div key={t.id} className="flex items-center gap-3 px-3 py-2.5 rounded-2xl"
-                        style={{
-                          background: isConfirmed ? "rgba(37,211,102,0.06)" : isPending ? "rgba(250,204,21,0.04)" : "rgba(255,255,255,0.03)",
-                          border: `1px solid ${isConfirmed ? "rgba(37,211,102,0.2)" : isPending ? "rgba(250,204,21,0.15)" : "rgba(255,255,255,0.06)"}`,
-                        }}>
-                        <div className="h-7 w-7 rounded-lg flex items-center justify-center shrink-0 text-[10px] font-black" style={{ background: "rgba(124,58,237,0.18)", color: "#a78bfa" }}>
-                          {String(idx + 1).padStart(2, "0")}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-bold truncate" style={{ color: isConfirmed ? "#4ade80" : "white" }}>{t.name}</p>
-                          <p className="text-[11px] truncate" style={{ color: "rgba(167,139,250,0.4)" }}>{t.phone ?? "No number"}</p>
-                        </div>
-                        <div className="shrink-0">
-                          {isConfirmed && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(37,211,102,0.15)", color: "#4ade80" }}>CONFIRMED</span>}
-                          {isPending   && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(250,204,21,0.15)", color: "#fbbf24" }}>PENDING</span>}
-                          {!booking    && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(255,255,255,0.06)", color: "rgba(196,181,253,0.3)" }}>NOT BOOKED</span>}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                <div className="px-6 pb-5 pt-3 shrink-0 space-y-2">
-                  {data && pendingCount > 0 && (
-                    <button onClick={debitAll} disabled={debiting}
-                      className="w-full py-3.5 rounded-xl font-bold text-sm text-white press-scale disabled:opacity-50 flex items-center justify-center gap-2"
-                      style={{ background: "linear-gradient(135deg,#dc2626,#ef4444)" }}>
-                      {debiting ? <><div className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" /> Debiting…</> : `⚡ Debit All ${pendingCount} — ₹${(tournament.entryFee ?? 0) * pendingCount}`}
-                    </button>
-                  )}
-                  <button onClick={() => setShowBookings(false)} className="w-full py-2 text-sm font-medium" style={{ color: "rgba(196,181,253,0.4)" }}>Close</button>
-                </div>
-              </div>
-            </div>
-          );
-        };
-        return <BookingsModal />;
       })()}
 
       {/* RULES MODAL */}

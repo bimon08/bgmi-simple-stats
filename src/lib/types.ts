@@ -7,6 +7,7 @@ export interface Team {
   slot?: number;
   players?: string[];
   paid?: boolean;
+  out?: boolean;
 }
 
 export interface PlayerKills {
