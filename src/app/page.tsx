@@ -99,6 +99,7 @@ export default function TeamsPage() {
   const [editingPlayerIdx, setEditingPlayerIdx] = useState<number | null>(null);
   const [showRoomInfo, setShowRoomInfo] = useState(false);
   const [showRulesModal, setShowRulesModal] = useState(false);
+  const [showPasteTip, setShowPasteTip] = useState(false);
   const [waGroupLink, setWaGroupLink] = useState("");
   const [waMessage, setWaMessage] = useState("");
   const [rulesText, setRulesText] = useState("");
@@ -1078,30 +1079,43 @@ export default function TeamsPage() {
                         style={{ caretColor:"#a78bfa" }}
                       />
                     </div>
-                    {/* Paste team block button — most reliable on mobile */}
-                    <button
-                      onClick={async () => {
-                        try {
-                          const text = await navigator.clipboard.readText();
-                          if (!text.trim()) { toast.error("Clipboard is empty"); return; }
-                          const parsed = parseTeamPaste(text);
-                          if (parsed) {
-                            if (parsed.teamName) setAddForm((f) => ({ ...f, name: parsed.teamName, phone: parsed.phone || f.phone }));
-                            if (parsed.players.length > 0) setPlayerInputs(parsed.players);
-                            toast.success('Team pasted!');
-                          } else {
-                            // Single-line — just set as name
-                            setAddForm((f) => ({ ...f, name: text.trim() }));
+                    {/* Paste button row */}
+                    <div className="relative flex items-center gap-2 mt-2">
+                      <button
+                        onClick={async () => {
+                          try {
+                            const text = await navigator.clipboard.readText();
+                            if (!text.trim()) { toast.error("Clipboard is empty"); return; }
+                            const parsed = parseTeamPaste(text);
+                            if (parsed) {
+                              if (parsed.teamName) setAddForm((f) => ({ ...f, name: parsed.teamName, phone: parsed.phone || f.phone }));
+                              if (parsed.players.length > 0) setPlayerInputs(parsed.players);
+                              toast.success('Team pasted!');
+                            } else {
+                              setAddForm((f) => ({ ...f, name: text.trim() }));
+                            }
+                          } catch {
+                            toast.error("Allow clipboard access and try again");
                           }
-                        } catch {
-                          toast.error("Allow clipboard access and try again");
-                        }
-                      }}
-                      className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold press-scale"
-                      style={{ background: "rgba(124,58,237,0.15)", color: "#c4b5fd", border: "1px solid rgba(124,58,237,0.2)" }}
-                    >
-                      <Clipboard className="h-3 w-3" /> Paste team block
-                    </button>
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold press-scale"
+                        style={{ background: "rgba(124,58,237,0.15)", color: "#c4b5fd", border: "1px solid rgba(124,58,237,0.2)" }}
+                      >
+                        <Clipboard className="h-3 w-3" /> Paste team block
+                      </button>
+                      <button
+                        onClick={() => setShowPasteTip((v) => !v)}
+                        className="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-black press-scale shrink-0"
+                        style={{ background: "rgba(124,58,237,0.12)", color: "rgba(167,139,250,0.5)", border: "1px solid rgba(124,58,237,0.15)" }}
+                      >?</button>
+                      {showPasteTip && (
+                        <div className="absolute left-0 top-full mt-1.5 z-10 rounded-2xl px-4 py-3 w-64" style={{ background: "#1a0d35", border: "1px solid rgba(124,58,237,0.3)", boxShadow: "0 8px 24px rgba(0,0,0,0.5)" }}>
+                          <p className="text-[10px] font-bold mb-1.5" style={{ color: "rgba(167,139,250,0.6)" }}>PASTE FORMAT</p>
+                          <pre className="text-[11px] leading-5" style={{ color: "#c4b5fd", fontFamily: "monospace" }}>{`Team Name\nLeader Name\n1234567890\nPlayer 2\nPlayer 3\nPlayer 4`}</pre>
+                          <p className="text-[9px] mt-2" style={{ color: "rgba(167,139,250,0.4)" }}>Copy from WhatsApp → tap Paste team block</p>
+                        </div>
+                      )}
+                    </div>
                   </div>                  {/* Phone — optional */}
                   <div className="rounded-2xl px-4 py-3.5 mb-3" style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.08)" }}>
                     <div className="flex items-center justify-between mb-1.5">
