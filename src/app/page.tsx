@@ -371,8 +371,29 @@ export default function TeamsPage() {
         ...combined.filter(t => !t.sharedFrom),
         ...combined.filter(t =>  t.sharedFrom),
       ];
-      saveTournaments(finalMerged);
-      setTournaments(finalMerged);
+
+      // Re-read localStorage NOW — user may have saved data (e.g. geminiData) while
+      // the network calls above were in flight. Merge sync results INTO fresh local,
+      // not over it, so mid-sync saves are never overwritten.
+      const freshLocal = loadTournaments();
+      const freshMap   = new Map(freshLocal.map(t => [t.id, t]));
+      const syncMap    = new Map(finalMerged.map(t => [t.id, t]));
+      const allFinalIds = new Set([...freshMap.keys(), ...syncMap.keys()]);
+      const ultimateMerged: Tournament[] = [];
+      allFinalIds.forEach(id => {
+        const f = freshMap.get(id);
+        const s = syncMap.get(id);
+        if (!f) { ultimateMerged.push(s!); return; }
+        if (!s) { ultimateMerged.push(f);  return; }
+        // Fresh local wins (has any mid-sync saves); merge teams from both
+        const freshNewer = (f.updatedAt ?? "") >= (s.updatedAt ?? "");
+        const base  = freshNewer ? f : s;
+        const other = freshNewer ? s : f;
+        ultimateMerged.push({ ...base, teams: mergeTeams(base.teams ?? [], other.teams ?? []) });
+      });
+      saveTournaments(ultimateMerged);
+      setTournaments(ultimateMerged);
+
       if (syncStatus !== 'unauthed') setSyncStatus('synced');
       if (showToast) toast.success(`Synced ☁️`);
     } catch {
