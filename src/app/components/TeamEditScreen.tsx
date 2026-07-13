@@ -2,7 +2,7 @@
 import { ChevronDown, Save, Trash2, Pencil, Phone, Tag, TrendingUp, X, BarChart2, Trophy, Hash, ListOrdered, UserPlus, Plus, Minus } from "lucide-react";
 import { Team, Tournament } from "@/lib/types";
 
-interface EditForm { name: string; slot: string; tags: string; players: string; phone: string; }
+interface EditForm { name: string; tags: string; players: string; phone: string; }
 
 interface Props {
   team: Team;
@@ -72,21 +72,51 @@ export default function TeamEditScreen({
               <p className="text-sm font-medium w-24 shrink-0" style={{ color:"rgba(196,181,253,0.6)" }}>Name</p>
               <div className="flex-1 flex items-center gap-2 px-3 py-2.5 rounded-2xl" style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.08)" }}>
                 <Pencil className="h-3.5 w-3.5 shrink-0" style={{ color:"rgba(196,181,253,0.4)" }} />
-                <input value={editTeamForm.name} onChange={(e) => setEditTeamForm((f) => ({ ...f, name: e.target.value }))} className="flex-1 bg-transparent text-white text-sm focus:outline-none min-w-0" style={{ caretColor:"#a78bfa" }} />
+                <input 
+                  value={editTeamForm.name} 
+                  onChange={(e) => setEditTeamForm((f) => ({ ...f, name: e.target.value }))} 
+                  onBlur={() => {
+                    const updated = { ...tournament, teams: tournament.teams.map((t) => t.id === liveTeam.id ? { ...t, name: editTeamForm.name.trim() || liveTeam.name } : t) };
+                    save(updated);
+                  }}
+                  className="flex-1 bg-transparent text-white text-sm focus:outline-none min-w-0" 
+                  style={{ caretColor:"#a78bfa" }} 
+                />
               </div>
             </div>
             <div className="flex items-center gap-3">
               <p className="text-sm font-medium w-24 shrink-0" style={{ color:"rgba(196,181,253,0.6)" }}>Phone</p>
               <div className="flex-1 flex items-center gap-2 px-3 py-2.5 rounded-2xl" style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.08)" }}>
                 <Phone className="h-3.5 w-3.5 shrink-0" style={{ color:"rgba(196,181,253,0.4)" }} />
-                <input type="tel" value={editTeamForm.phone} onChange={(e) => setEditTeamForm((f) => ({ ...f, phone: e.target.value }))} placeholder="Leader phone" className="flex-1 bg-transparent text-white text-sm focus:outline-none min-w-0" style={{ caretColor:"#a78bfa" }} />
+                <input 
+                  type="tel" 
+                  value={editTeamForm.phone} 
+                  onChange={(e) => setEditTeamForm((f) => ({ ...f, phone: e.target.value }))} 
+                  onBlur={() => {
+                    const updated = { ...tournament, teams: tournament.teams.map((t) => t.id === liveTeam.id ? { ...t, phone: editTeamForm.phone.trim() } : t) };
+                    save(updated);
+                  }}
+                  placeholder="Leader phone" 
+                  className="flex-1 bg-transparent text-white text-sm focus:outline-none min-w-0" 
+                  style={{ caretColor:"#a78bfa" }} 
+                />
               </div>
             </div>
             <div className="flex items-center gap-3">
               <p className="text-sm font-medium w-24 shrink-0" style={{ color:"rgba(196,181,253,0.6)" }}>Tags</p>
               <div className="flex-1 flex items-center gap-2 px-3 py-2.5 rounded-2xl" style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.08)" }}>
                 <Tag className="h-3.5 w-3.5 shrink-0" style={{ color:"rgba(196,181,253,0.4)" }} />
-                <input value={editTeamForm.tags} onChange={(e) => setEditTeamForm((f) => ({ ...f, tags: e.target.value }))} placeholder="Tags" className="flex-1 bg-transparent text-white text-sm focus:outline-none min-w-0" style={{ caretColor:"#a78bfa" }} />
+                <input 
+                  value={editTeamForm.tags} 
+                  onChange={(e) => setEditTeamForm((f) => ({ ...f, tags: e.target.value }))} 
+                  onBlur={() => {
+                    const updated = { ...tournament, teams: tournament.teams.map((t) => t.id === liveTeam.id ? { ...t, tags: editTeamForm.tags.split(",").map(tg=>tg.trim()).filter(Boolean) } : t) };
+                    save(updated);
+                  }}
+                  placeholder="Tags" 
+                  className="flex-1 bg-transparent text-white text-sm focus:outline-none min-w-0" 
+                  style={{ caretColor:"#a78bfa" }} 
+                />
               </div>
             </div>
             <div className="grid grid-cols-3 gap-2 pt-1">
@@ -95,7 +125,6 @@ export default function TeamEditScreen({
               {statPill(<BarChart2 className="h-3.5 w-3.5" style={{ color:"#a78bfa" }} />, "TP", tp)}
               {statPill(<Trophy className="h-3.5 w-3.5" style={{ color:"#a78bfa" }} />, "WIN", wins)}
               {statPill(<Hash className="h-3.5 w-3.5" style={{ color:"#a78bfa" }} />, "MP", matchCount)}
-              {statPill(<ListOrdered className="h-3.5 w-3.5" style={{ color:"#a78bfa" }} />, "Slot", liveTeam.slot ?? "—")}
             </div>
             <div className="grid grid-cols-2 gap-3 pt-1">
               <button className="py-3 rounded-2xl text-sm font-semibold press-scale" style={{ background:"rgba(124,58,237,0.3)", color:"#e9d5ff" }}>Add bonus points</button>

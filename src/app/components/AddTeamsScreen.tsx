@@ -4,7 +4,7 @@ import { X, ImageIcon, HelpCircle, UserPlus, Phone, Plus, Clipboard, Users, Trop
 import { toast } from "sonner";
 import { Tournament, Team } from "@/lib/types";
 
-interface AddForm { name: string; slot: string; tags: string; phone: string; }
+interface AddForm { name: string; tags: string; phone: string; }
 interface SnapShot { teamCount: number; entryFee: number; isActive: boolean; }
 
 interface Props {
@@ -285,9 +285,6 @@ export default function AddTeamsScreen({
                     onEditTeam?.(team);
                   }}
                 >
-                  {team.slot && (
-                    <span className="text-xs font-bold shrink-0 w-5 text-center" style={{ color:"rgba(139,92,246,0.7)" }}>#{team.slot}</span>
-                  )}
                   <div className="h-9 w-9 rounded-xl flex items-center justify-center shrink-0 text-white text-xs font-bold"
                     style={{ background: avatarColors[idx % avatarColors.length] }}>
                     {initials(team.name)}

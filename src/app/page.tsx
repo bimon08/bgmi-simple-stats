@@ -98,10 +98,10 @@ export default function TeamsPage() {
   const [showAddScreen, setShowAddScreen] = useState(false);
   const [addScreenTab, setAddScreenTab] = useState<"add" | "entered">("add");
   const [addScreenMode, setAddScreenMode] = useState<"create" | "edit">("create");
-  const [addForm, setAddForm] = useState({ name: "", slot: "", tags: "", phone: "" });
+  const [addForm, setAddForm] = useState({ name: "", tags: "", phone: "" });
   const [playerInputs, setPlayerInputs] = useState<string[]>([""]);  
   const [editingTeam, setEditingTeam] = useState<Team | null>(null);
-  const [editTeamForm, setEditTeamForm] = useState({ name: "", slot: "", tags: "", players: "", phone: "" });
+  const [editTeamForm, setEditTeamForm] = useState({ name: "", tags: "", players: "", phone: "" });
   const [initialTeamCount, setInitialTeamCount] = useState(0);
   const [addScreenSnapshot, setAddScreenSnapshot] = useState<{ teamCount: number; entryFee: number; isActive: boolean } | null>(null);
   const [showSlots, setShowSlots] = useState(false);
@@ -542,7 +542,7 @@ export default function TeamsPage() {
     setTournaments((prev) => { const u = [...prev, t]; saveTournaments(u); return u; });
     setTournament(t);
     setCreateName(""); setRoundRobin(false); setShowCreate(false);
-    setAddForm({ name: "", slot: String(t.teams.length + 1), tags: "", phone: "" });
+    setAddForm({ name: "", tags: "", phone: "" });
     setAddScreenTab("add"); setAddScreenMode("create"); setShowAddScreen(true);
     setAddScreenSnapshot({ teamCount: t.teams.length, entryFee: t.entryFee ?? 0, isActive: t.isActive ?? false });
   };
@@ -567,7 +567,7 @@ export default function TeamsPage() {
     // Start ALL teams as OUT (not booked) — user marks each one IN before cloning
     setExcludedCloneTeams(new Set(draft.teams.map(t => t.id)));
     setShowCreate(false);
-    setAddForm({ name: "", slot: String(draft.teams.length + 1), tags: "", phone: "" });
+    setAddForm({ name: "", tags: "", phone: "" });
     setAddScreenTab("entered"); setAddScreenMode("create"); setShowAddScreen(true);
     setAddScreenSnapshot({ teamCount: draft.teams.length, entryFee: draft.entryFee ?? 0, isActive: draft.isActive ?? false });
   };
@@ -601,7 +601,6 @@ export default function TeamsPage() {
     const newTeam: Team = {
       id: crypto.randomUUID(),
       name: addForm.name.trim(),
-      slot: addForm.slot ? Number(addForm.slot) : undefined,
       players: players.length > 0 ? uniquePlayers(players) : undefined,
       phone: phoneDigits,
       out: false, // always IN when manually added
@@ -611,7 +610,7 @@ export default function TeamsPage() {
     // Auto-create leader wallet (captain name or team name)
     const captainName = players[0] || newTeam.name;
     upsertLeaderWallet(captainName, phoneDigits);
-    setAddForm({ name: "", slot: String(updated.teams.length + 1), tags: "", phone: "" });
+    setAddForm({ name: "", tags: "", phone: "" });
     setPlayerInputs([""]);
     toast.success(`"${newTeam.name}" added!`);
   };
@@ -776,14 +775,12 @@ export default function TeamsPage() {
 
   const saveEditTeam = () => {
     if (!tournament || !editingTeam) return;
+    const liveTeam = tournament.teams.find(t => t.id === editingTeam.id) || editingTeam;
     const updatedTeam = {
-      ...editingTeam,
-      name: editTeamForm.name.trim() || editingTeam.name,
-      tags: editTeamForm.tags || undefined,
-      phone: editTeamForm.phone.trim() || editingTeam.phone,
-      players: editTeamForm.players.trim()
-        ? uniquePlayers(editTeamForm.players.split(/[,\n]+/).map((p) => p.trim()).filter(Boolean))
-        : editingTeam.players,
+      ...liveTeam,
+      name: editTeamForm.name.trim() || liveTeam.name,
+      tags: editTeamForm.tags.split(",").map(t=>t.trim()).filter(Boolean),
+      phone: editTeamForm.phone.trim() || liveTeam.phone,
     };
     const updated = tournament.teams.map((t) => t.id === editingTeam.id ? updatedTeam : t);
     save({ ...tournament, teams: updated });
@@ -1417,7 +1414,7 @@ export default function TeamsPage() {
           save={save}
           onClose={() => { setShowEdit(false); }}
           onEditTeams={() => {
-            setAddForm({ name: "", slot: String((tournament?.teams.length ?? 0) + 1), tags: "", phone: "" });
+            setAddForm({ name: "", tags: "", phone: "" });
             setPlayerInputs([""]);
             setAddScreenTab("entered"); // open on Entered so user sees all teams + can toggle booked/not
             setAddScreenMode("edit");
