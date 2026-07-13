@@ -47,28 +47,29 @@ function Pill({ label, icon, onPress, active = false, variant = "default" }: {
 /** Merge two team arrays by ID with field-level conflict resolution.
  *  When the same team exists on both sides, the non-empty value wins for
  *  optional fields (phone, players) so collaborator additions are preserved. */
-function mergeTeams(local: Team[], remote: Team[]): Team[] {
-  const localMap  = new Map(local.map(t => [t.id, t]));
-  const remoteMap = new Map(remote.map(t => [t.id, t]));
-  const allIds    = new Set([...localMap.keys(), ...remoteMap.keys()]);
+function mergeTeams(base: Team[], other: Team[], baseIsLocal: boolean): Team[] {
+  const baseMap  = new Map(base.map(t => [t.id, t]));
+  const otherMap = new Map(other.map(t => [t.id, t]));
   const result: Team[] = [];
-  allIds.forEach(id => {
-    const l = localMap.get(id);
-    const r = remoteMap.get(id);
-    if (!l) { result.push(r!); return; }
-    if (!r) { result.push(l);  return; }
-    // Both sides have the team — merge at field level
+  // Always include all base teams (the "winner" side)
+  for (const t of base) {
+    const o = otherMap.get(t.id);
+    if (!o) { result.push(t); continue; }
+    // Both sides have the team — merge fields
     result.push({
-      ...r,             // remote as base (DB ground truth)
-      ...l,             // local scalar fields override
-      // Optional fields: take whichever side is non-empty
-      phone: l.phone || r.phone || undefined,
-      // Players: take whichever side has more (or local if equal)
-      players: (l.players?.length ?? 0) >= (r.players?.length ?? 0)
-        ? (l.players ?? [])
-        : (r.players ?? []),
+      ...o,
+      ...t,
+      phone: t.phone || o.phone || undefined,
+      players: (t.players?.length ? t.players : o.players) ?? [],
     });
-  });
+  }
+  // Only add other-only teams if other is the local side (i.e., base is remote)
+  // This prevents remote-only teams from re-appearing after local deletion
+  if (!baseIsLocal) {
+    for (const [id, t] of otherMap) {
+      if (!baseMap.has(id)) result.push(t);
+    }
+  }
   return result;
 }
 
@@ -175,7 +176,7 @@ export default function TeamsPage() {
           const rTs = r.updatedAt ?? r.createdAt ?? "";
           const base  = lTs >= rTs ? l : r;
           const other = lTs >= rTs ? r : l;
-          merged.push({ ...base, teams: mergeTeams(base.teams ?? [], other.teams ?? []) });
+          merged.push({ ...base, teams: mergeTeams(base.teams ?? [], other.teams ?? [], lTs >= rTs) });
         });
         saveTournaments(merged);
         setTournaments(merged);
@@ -348,7 +349,7 @@ export default function TeamsPage() {
             const other = localNewer ? r : l;
             ownedMerged.push({
               ...base,
-              teams: mergeTeams(base.teams ?? [], other.teams ?? []),
+              teams: mergeTeams(base.teams ?? [], other.teams ?? [], localNewer),
               // For every admin-set field: local value wins over remote.
               // Remote only fills in if local is completely absent (undefined).
               // This ensures any intentional change on this device survives sync
@@ -365,10 +366,12 @@ export default function TeamsPage() {
               assignments: l.assignments ?? r.assignments,
             });
           });
-          if (ownedMerged.length > 0) {
+          // Filter out deleted tournaments before pushing
+          const pushPayload = ownedMerged.filter(t => !deletedIds.has(t.id));
+          if (pushPayload.length > 0) {
             const pushRes = await fetch("/api/tournaments", {
               method: "PUT", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ tournaments: ownedMerged }),
+              body: JSON.stringify({ tournaments: pushPayload }),
             });
             if (pushRes.status === 401) setSyncStatus('unauthed');
             else if (!pushRes.ok) throw new Error("Sync failed");
@@ -396,7 +399,7 @@ export default function TeamsPage() {
           if (!sRes.ok) { sharedMerged.push(st); continue; } // code gone? keep local
           const { tournament: remote } = await sRes.json() as { tournament: Tournament };
           // Merge teams (incoming local wins for its teams, remote fills gaps)
-          const merged: Tournament = { ...remote, sharedFrom: code, teams: mergeTeams(st.teams ?? [], remote.teams ?? []) };
+          const merged: Tournament = { ...remote, sharedFrom: code, teams: mergeTeams(st.teams ?? [], remote.teams ?? [], true) };
           // Strip owner-only fields before pushing so they can't bleed back through the share endpoint
           const { isActive: _ia, entryFee: _ef, ...sharePayload } = merged;
           void _ia; void _ef;
@@ -442,7 +445,7 @@ export default function TeamsPage() {
         const other = freshNewer ? s : f;
         ultimateMerged.push({
           ...base,
-          teams: mergeTeams(base.teams ?? [], other.teams ?? []),
+          teams: mergeTeams(base.teams ?? [], other.teams ?? [], freshNewer),
           // Preserve intentional isActive/entryFee changes made mid-sync
           isActive:  f.isActive  ?? s.isActive,
           entryFee:  f.entryFee  ?? s.entryFee ?? 0,
@@ -793,11 +796,14 @@ export default function TeamsPage() {
     toast.success('Team updated!');
   };
 
-  const handleDeleteTournament = (id: string) => {
+  const handleDeleteTournament = async (id: string) => {
     setTournaments((prev) => deleteTournamentById(id, prev));
     toast.success("Deleted");
-    // Also delete from server so it doesn't come back on refresh
-    fetch(`/api/tournaments/${id}`, { method: "DELETE" }).catch(() => {});
+    // Delete from server — await so sync doesn't race and re-create it
+    try {
+      const res = await fetch(`/api/tournaments/${id}`, { method: "DELETE" });
+      if (!res.ok) toast.error("Server delete failed");
+    } catch { /* offline — deleted ID is tracked so sync won't re-add */ }
   };
 
   const handleShare = async (t: Tournament) => {
@@ -1819,11 +1825,11 @@ export default function TeamsPage() {
               {/* Leaders list — scrollable */}
               <div className="px-4 pt-3 pb-1 shrink-0">
                 <p className="text-[10px] font-bold" style={{ color: "rgba(167,139,250,0.5)" }}>
-                  LEADERS — {tournament.teams.filter(t => t.phone).length}/{tournament.teams.length} with number
+                  LEADERS — {tournament.teams.filter(t => !t.out && t.phone).length}/{tournament.teams.filter(t => !t.out).length} with number
                 </p>
               </div>
               <div className="overflow-y-auto flex-1 px-4 pb-4 space-y-2">
-                {tournament.teams.map((team) => {
+                {tournament.teams.filter(tm => !tm.out).map((team) => {
                   const hasPhone = !!team.phone?.trim();
                   const sent = sentIds.has(team.id);
                   return (
