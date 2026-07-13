@@ -33,7 +33,29 @@ export async function GET(_: Request, { params }: { params: Promise<{ token: str
 
   const bookedIds = new Set(wallet.bookings.map((b) => b.tournamentId));
   const walletNorm = wallet.phone ? normalizePhone(wallet.phone) : null;
-
+  // Auto-create bookings for teams that are IN (not out) and match this wallet's phone
+  if (walletNorm) {
+    for (const t of wallet.user.savedTournaments) {
+      if (bookedIds.has(t.id)) continue;
+      const data = t.data as { teams?: { phone?: string; name?: string; players?: string[]; out?: boolean }[] };
+      const matchingTeam = (data.teams ?? []).find(
+        (team) => !team.out && team.phone && normalizePhone(team.phone) === walletNorm
+      );
+      if (!matchingTeam) continue;
+      const roster = { teamName: matchingTeam.name ?? "", players: matchingTeam.players ?? [] };
+      await prisma.slotBooking.create({
+        data: {
+          walletId: wallet.id,
+          tournamentId: t.id,
+          entryFee: t.entryFee ?? 0,
+          status: "PENDING",
+          bookedByAdmin: true,
+          roster,
+        },
+      }).catch(() => {});
+      bookedIds.add(t.id);
+    }
+  }
 
 
   // Re-fetch bookings after potential auto-create
