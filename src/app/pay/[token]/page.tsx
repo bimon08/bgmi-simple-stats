@@ -215,7 +215,7 @@ export default function PlayerWalletPage({ params }: { params: Promise<{ token: 
           <p className="text-[11px] font-semibold text-zinc-600 uppercase tracking-wider mb-3">Open Tournaments</p>
           <div className="space-y-3">
             {tournaments.map((t) => {
-              const booked    = !!t.bookingStatus;
+              const booked    = !!t.bookingStatus && t.bookingStatus !== "SKIPPED";
               const confirmed = t.bookingStatus === "CONFIRMED";
               const canAfford = balance >= t.entryFee;
               const isBusy    = bookingId === t.id;

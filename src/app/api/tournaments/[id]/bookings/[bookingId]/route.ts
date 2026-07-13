@@ -3,11 +3,11 @@ import { NextResponse } from "next/server";
 import { auth } from "@root/auth";
 
 /**
- * DELETE /api/tournaments/[id]/bookings/[bookingId]
- * Admin skips/removes a single booking.
+ * PATCH /api/tournaments/[id]/bookings/[bookingId]
+ * Admin toggles skip status for a single booking.
  */
-export async function DELETE(
-  _req: Request,
+export async function PATCH(
+  req: Request,
   { params }: { params: Promise<{ id: string; bookingId: string }> }
 ) {
   const session = await auth();
@@ -15,6 +15,7 @@ export async function DELETE(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id: tournamentId, bookingId } = await params;
+  const { status } = await req.json();
 
   // Verify tournament belongs to this user
   const tournament = await prisma.savedTournament.findFirst({
@@ -23,7 +24,11 @@ export async function DELETE(
   if (!tournament)
     return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  await prisma.slotBooking.delete({ where: { id: bookingId } });
+  await prisma.slotBooking.update({ 
+    where: { id: bookingId },
+    data: { status }
+  });
 
   return NextResponse.json({ ok: true });
 }
+

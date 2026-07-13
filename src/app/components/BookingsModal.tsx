@@ -35,6 +35,20 @@ export default function BookingsModal({ tournament, save, onClose, onSyncNow }: 
   const [debiting, setDebiting] = useState(false);
   // isActive owned locally — initialized from DB on mount, not from parent prop
   const [isActive, setIsActive] = useState<boolean>(tournament.isActive ?? false);
+  const [skipProcessing, setSkipProcessing] = useState<Set<string>>(new Set());
+
+  const toggleSkip = async (bookingId: string, currentStatus: string) => {
+    setSkipProcessing(prev => new Set(prev).add(bookingId));
+    const newStatus = currentStatus === "SKIPPED" ? "PENDING" : "SKIPPED";
+    await fetch(`/api/tournaments/${tournament.id}/bookings/${bookingId}`, { 
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: newStatus })
+    });
+    const d = await fetch(`/api/tournaments/${tournament.id}/bookings`).then(r => r.json());
+    setData(d);
+    setSkipProcessing(prev => { const n = new Set(prev); n.delete(bookingId); return n; });
+  };
 
   useEffect(() => {
     fetch(`/api/tournaments/${tournament.id}/bookings`)
@@ -151,14 +165,17 @@ export default function BookingsModal({ tournament, save, onClose, onSyncNow }: 
                   {isAdminBooked && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(124,58,237,0.2)", color: "#c4b5fd" }}>🛡 Admin</span>}
                   {hasBooking && !isConfirmed && (
                     <button
-                      onClick={async () => {
-                        await fetch(`/api/tournaments/${tournament.id}/bookings/${booking!.id}`, { method: "DELETE" });
-                        const d = await fetch(`/api/tournaments/${tournament.id}/bookings`).then(r => r.json());
-                        setData(d);
+                      onClick={() => toggleSkip(booking!.id, booking!.status)}
+                      disabled={skipProcessing.has(booking!.id)}
+                      className="text-[10px] font-bold px-2 py-0.5 rounded-full press-scale disabled:opacity-50 flex items-center justify-center min-w-[40px]"
+                      style={{ 
+                        background: booking!.status === "SKIPPED" ? "rgba(139,92,246,0.12)" : "rgba(239,68,68,0.12)", 
+                        color: booking!.status === "SKIPPED" ? "#c4b5fd" : "#f87171", 
+                        border: `1px solid ${booking!.status === "SKIPPED" ? "rgba(139,92,246,0.3)" : "rgba(239,68,68,0.2)"}`
                       }}
-                      className="text-[10px] font-bold px-2 py-0.5 rounded-full press-scale"
-                      style={{ background: "rgba(239,68,68,0.12)", color: "#f87171", border: "1px solid rgba(239,68,68,0.2)" }}
-                    >Skip</button>
+                    >
+                      {skipProcessing.has(booking!.id) ? <div className="h-3 w-3 rounded-full border-2 border-current border-t-transparent animate-spin" /> : booking!.status === "SKIPPED" ? "Unskip" : "Skip"}
+                    </button>
                   )}
                 </div>
               </div>
@@ -187,14 +204,17 @@ export default function BookingsModal({ tournament, save, onClose, onSyncNow }: 
                       {isAdminBooked && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(124,58,237,0.2)", color: "#c4b5fd" }}>🛡 Admin</span>}
                       {!isConfirmed && (
                         <button
-                          onClick={async () => {
-                            await fetch(`/api/tournaments/${tournament.id}/bookings/${b.id}`, { method: "DELETE" });
-                            const d = await fetch(`/api/tournaments/${tournament.id}/bookings`).then(r => r.json());
-                            setData(d);
+                          onClick={() => toggleSkip(b.id, b.status)}
+                          disabled={skipProcessing.has(b.id)}
+                          className="text-[10px] font-bold px-2 py-0.5 rounded-full press-scale disabled:opacity-50 flex items-center justify-center min-w-[40px]"
+                          style={{ 
+                            background: b.status === "SKIPPED" ? "rgba(139,92,246,0.12)" : "rgba(239,68,68,0.12)", 
+                            color: b.status === "SKIPPED" ? "#c4b5fd" : "#f87171", 
+                            border: `1px solid ${b.status === "SKIPPED" ? "rgba(139,92,246,0.3)" : "rgba(239,68,68,0.2)"}`
                           }}
-                          className="text-[10px] font-bold px-2 py-0.5 rounded-full press-scale"
-                          style={{ background: "rgba(239,68,68,0.12)", color: "#f87171", border: "1px solid rgba(239,68,68,0.2)" }}
-                        >Skip</button>
+                        >
+                          {skipProcessing.has(b.id) ? <div className="h-3 w-3 rounded-full border-2 border-current border-t-transparent animate-spin" /> : b.status === "SKIPPED" ? "Unskip" : "Skip"}
+                        </button>
                       )}
                     </div>
                   </div>

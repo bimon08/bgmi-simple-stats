@@ -26,21 +26,37 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
     where: { walletId_tournamentId: { walletId: wallet.id, tournamentId } },
   });
   if (existing) {
-    return NextResponse.json({ ok: true, status: existing.status, already: true });
-  }
-
-  const booking = await prisma.slotBooking.create({
-    data: {
-      walletId: wallet.id,
-      tournamentId,
-      entryFee: tournament.entryFee,
-      status: "PENDING",
-      roster: {
-        teamName: teamName?.trim() || (wallet.playerName ?? ""),
-        players: (players ?? []).map((p: string) => p.trim()).filter(Boolean),
+    if (existing.status === "SKIPPED") {
+      // Re-activate a skipped booking
+      await prisma.slotBooking.update({
+        where: { id: existing.id },
+        data: {
+          status: "PENDING",
+          bookedByAdmin: false, // it's self-booked now
+          roster: {
+            teamName: teamName?.trim() || (wallet.playerName ?? ""),
+            players: (players ?? []).map((p: string) => p.trim()).filter(Boolean),
+          },
+        }
+      });
+      // Fall through to sync team entry
+    } else {
+      return NextResponse.json({ ok: true, status: existing.status, already: true });
+    }
+  } else {
+    await prisma.slotBooking.create({
+      data: {
+        walletId: wallet.id,
+        tournamentId,
+        entryFee: tournament.entryFee,
+        status: "PENDING",
+        roster: {
+          teamName: teamName?.trim() || (wallet.playerName ?? ""),
+          players: (players ?? []).map((p: string) => p.trim()).filter(Boolean),
+        },
       },
-    },
-  });
+    });
+  }
 
   // Sync team entry: flip OUT→IN if phone matches, or CREATE new team entry if not
   try {
