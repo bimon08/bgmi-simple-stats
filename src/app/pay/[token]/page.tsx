@@ -254,7 +254,7 @@ export default function PlayerWalletPage({ params }: { params: Promise<{ token: 
                             background: t.bookedByAdmin ? "rgba(124,58,237,0.12)" : "rgba(37,211,102,0.10)",
                             color: t.bookedByAdmin ? "#a78bfa" : "#4ade80",
                           }}>
-                          {t.bookedByAdmin ? "🛡️ Booked by Admin" : "✓ Booked"}
+                          {t.bookedByAdmin ? "🔒 Slot Reserved" : "✓ Booked"}
                         </span>
                         {selfBooked && showForm && (
                           <button onClick={() => { cancelBooking(t.bookingId!, t.id); setRosterForm(null); }}

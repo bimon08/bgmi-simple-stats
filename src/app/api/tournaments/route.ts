@@ -86,34 +86,7 @@ export async function PUT(req: Request) {
     })
   );
 
-  // Auto-book leaders for ALL active tournaments (including free ones)
-  const activeTournaments = tournaments.filter(t => (t.isActive ?? false));
-  if (activeTournaments.length > 0) {
-    const wallets = await prisma.wallet.findMany({
-      where: { userId: caller.userId, phone: { not: null } },
-      select: { id: true, phone: true },
-    });
-    for (const t of activeTournaments) {
-      const existing = await prisma.slotBooking.findMany({
-        where: { tournamentId: t.id },
-        select: { walletId: true },
-      });
-      const bookedIds = new Set(existing.map(b => b.walletId));
-      for (const team of (t.teams ?? [])) {
-        if (!team.phone) continue;
-        const phoneDigits = (team.phone as string).replace(/\D/g, "");
-        if (phoneDigits.length < 7) continue;
-        const normalize = (p: string) => { const d = p.replace(/\D/g, ""); return d.length > 10 ? d.slice(-10) : d; };
-        const wallet = wallets.find(w => normalize(w.phone ?? "") === normalize(phoneDigits));
-        if (!wallet || bookedIds.has(wallet.id)) continue;
-        const roster = { teamName: (team as { name?: string }).name ?? "", players: (team as { players?: string[] }).players ?? [] };
-        await prisma.slotBooking.create({
-          data: { walletId: wallet.id, tournamentId: t.id, entryFee: t.entryFee ?? 0, status: "PENDING", bookedByAdmin: true, roster },
-        }).catch(() => {});
-        bookedIds.add(wallet.id);
-      }
-    }
-  }
+
 
   return NextResponse.json({ ok: true, count: tournaments.length });
 }
