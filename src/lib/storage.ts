@@ -69,7 +69,30 @@ export function createTournament(name: string): Tournament {
 export function deleteTournamentById(id: string, all: Tournament[]): Tournament[] {
   const updated = all.filter(t => t.id !== id);
   saveTournaments(updated);
+  // Track deleted IDs so sync doesn't re-add them from DB
+  markTournamentDeleted(id);
   return updated;
+}
+
+const DELETED_KEY = "bgmi-deleted-tournaments";
+
+export function markTournamentDeleted(id: string): void {
+  const ids = getDeletedTournamentIds();
+  ids.add(id);
+  localStorage.setItem(DELETED_KEY, JSON.stringify([...ids]));
+}
+
+export function getDeletedTournamentIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(DELETED_KEY);
+    return raw ? new Set(JSON.parse(raw) as string[]) : new Set();
+  } catch { return new Set(); }
+}
+
+export function clearDeletedTournamentId(id: string): void {
+  const ids = getDeletedTournamentIds();
+  ids.delete(id);
+  localStorage.setItem(DELETED_KEY, JSON.stringify([...ids]));
 }
 
 // Legacy compat exports

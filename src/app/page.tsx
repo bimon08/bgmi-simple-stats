@@ -26,6 +26,7 @@ import SYNCED_PLAYERS from "@/data/players.json";
 import {
   loadTournaments, saveTournaments, createTournament,
   upsertTournament, deleteTournamentById, mergeTournaments,
+  getDeletedTournamentIds,
 } from "@/lib/storage";
 import { compareTiebreaker } from "@/lib/points";
 import { generatePrompt } from "@/lib/prompt";
@@ -159,8 +160,10 @@ export default function TeamsPage() {
       .then((json) => {
         if (!json?.tournaments) return;
         const remote: Tournament[] = json.tournaments;
+        const deletedIds = getDeletedTournamentIds();
+        const remoteFiltered = remote.filter((t: Tournament) => !deletedIds.has(t.id));
         const localMap  = new Map(local.map((t) => [t.id, t]));
-        const remoteMap = new Map(remote.map((t) => [t.id, t]));
+        const remoteMap = new Map(remoteFiltered.map((t) => [t.id, t]));
         const allIds = new Set([...localMap.keys(), ...remoteMap.keys()]);
         const merged: Tournament[] = [];
         allIds.forEach((id) => {
@@ -326,7 +329,9 @@ export default function TeamsPage() {
         if (pullRes.status === 401) { setSyncStatus('unauthed'); }
         else if (pullRes.ok) {
           const { tournaments: remote } = await pullRes.json() as { tournaments: Tournament[] };
-          const remoteMap = new Map(remote.map((t: Tournament) => [t.id, t]));
+          const deletedIds = getDeletedTournamentIds();
+          const remoteFiltered = remote.filter((t: Tournament) => !deletedIds.has(t.id));
+          const remoteMap = new Map(remoteFiltered.map((t: Tournament) => [t.id, t]));
           const localMap  = new Map(ownedLocal.map(t => [t.id, t]));
           const allIds = new Set([...localMap.keys(), ...remoteMap.keys()]);
           ownedMerged = [];
