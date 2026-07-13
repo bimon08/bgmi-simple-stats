@@ -221,8 +221,8 @@ export default function PlayerWalletPage({ params }: { params: Promise<{ token: 
               const canAfford = balance >= t.entryFee;
               const isBusy    = bookingId === t.id;
               const isCancelling = cancellingId === t.id;
-              const selfBooked = booked && !t.bookedByAdmin && !confirmed && !skipped;
-              const canEdit = booked && !confirmed && !skipped; // skipped teams can't edit
+              const selfBooked = booked && !t.bookedByAdmin && !confirmed;
+              const canEdit = booked && !confirmed; // both self and admin-booked can edit
               const showForm  = rosterForm?.id === t.id;
               const openEdit = canEdit && !showForm ? () => {
                 const existingPlayers = t.roster?.players ?? [];
