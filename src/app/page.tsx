@@ -181,7 +181,10 @@ export default function TeamsPage() {
         setTournaments(merged);
         setSyncStatus('synced');
       })
-      .catch(() => {}); // fail silently if offline on load
+      .catch(() => {
+        // If online but failed, auto-retry once after 5s
+        if (navigator.onLine) setTimeout(() => doSync(false), 5000);
+      });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -457,8 +460,15 @@ export default function TeamsPage() {
       if (syncStatus !== 'unauthed') setSyncStatus('synced');
       if (showToast) toast.success(`Synced ☁️`);
     } catch {
-      setSyncStatus('offline');
-      if (showToast) toast.error("Sync failed — will retry when online");
+      if (!navigator.onLine) {
+        setSyncStatus('offline');
+        if (showToast) toast.error("You're offline — will retry when connected");
+      } else {
+        // Online but sync failed (server error / timeout) — auto-retry after 5s
+        setSyncStatus('idle');
+        if (showToast) toast.error("Sync failed — retrying…");
+        setTimeout(() => doSync(false), 5000);
+      }
     }
   };
 
