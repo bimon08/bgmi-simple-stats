@@ -25,6 +25,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
   const existing = await prisma.slotBooking.findUnique({
     where: { walletId_tournamentId: { walletId: wallet.id, tournamentId } },
   });
+  let activeBookingId: string;
+
   if (existing) {
     if (existing.status === "SKIPPED") {
       // Re-activate a skipped booking
@@ -39,12 +41,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
           },
         }
       });
+      activeBookingId = existing.id;
       // Fall through to sync team entry
     } else {
       return NextResponse.json({ ok: true, status: existing.status, already: true });
     }
   } else {
-    await prisma.slotBooking.create({
+    const newBooking = await prisma.slotBooking.create({
       data: {
         walletId: wallet.id,
         tournamentId,
@@ -56,6 +59,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
         },
       },
     });
+    activeBookingId = newBooking.id;
   }
 
   // Sync team entry: flip OUT→IN if phone matches, or CREATE new team entry if not
@@ -94,7 +98,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
     }
   } catch { /* non-fatal — booking already created */ }
 
-  return NextResponse.json({ ok: true, bookingId: booking.id, status: "PENDING" });
+  return NextResponse.json({ ok: true, bookingId: activeBookingId, status: "PENDING" });
 }
 
 // DELETE /api/pay/[token]/book
