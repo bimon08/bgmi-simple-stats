@@ -1215,7 +1215,7 @@ export default function TeamsPage() {
                         >{t.name}</p>
                       )}
                       <div className="flex items-center gap-2 mt-0.5">
-                        <p className="text-xs" style={{ color: "rgba(167,139,250,0.5)" }}>Teams: {t.teams.length}</p>
+                        <p className="text-xs" style={{ color: "rgba(167,139,250,0.5)" }}>Teams: {t.teams.filter(tm => !tm.out).length}</p>
                         {t.updatedAt && (
                           <span className="text-[10px]" style={{ color: "rgba(167,139,250,0.3)" }}>
                             · {new Date(t.updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true })}
