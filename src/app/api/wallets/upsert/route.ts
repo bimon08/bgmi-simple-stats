@@ -32,6 +32,14 @@ export async function POST(req: Request) {
   });
 
   if (existing) {
+    // Update name if it changed (admin may rename the team leader)
+    if (existing.playerName !== playerName) {
+      const updated = await prisma.wallet.update({
+        where: { id: existing.id },
+        data: { playerName },
+      });
+      return NextResponse.json({ wallet: updated, created: false });
+    }
     return NextResponse.json({ wallet: existing, created: false });
   }
 
