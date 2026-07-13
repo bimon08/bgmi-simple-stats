@@ -85,8 +85,50 @@ export async function PUT(req: Request) {
       });
     })
   );
+  // Run auto-book logic for any active tournaments
+  for (const incoming of tournaments) {
+    if (!incoming.isActive) continue;
+    
+    // Find all IN teams with phone numbers
+    const activeTeams = (incoming.teams ?? []).filter(t => !t.out && t.phone);
+    if (!activeTeams.length) continue;
 
+    const normalize = (p: string) => { const d = p.replace(/\D/g, ""); return d.length > 10 ? d.slice(-10) : d; };
+    
+    // Find matching wallets
+    const wallets = await prisma.wallet.findMany({
+      where: { userId: caller.userId, phone: { not: null } },
+      select: { id: true, phone: true }
+    });
 
+    // Find existing bookings to avoid duplicates
+    const existingBookings = await prisma.slotBooking.findMany({
+      where: { tournamentId: incoming.id },
+      select: { walletId: true }
+    });
+    const bookedIds = new Set(existingBookings.map(b => b.walletId));
+
+    for (const team of activeTeams) {
+      const phoneDigits = (team.phone as string).replace(/\D/g, "");
+      if (phoneDigits.length < 7) continue;
+      
+      const wallet = wallets.find(w => normalize(w.phone ?? "") === normalize(phoneDigits));
+      if (!wallet || bookedIds.has(wallet.id)) continue;
+      
+      const roster = { teamName: team.name ?? "", players: team.players ?? [] };
+      await prisma.slotBooking.create({
+        data: { 
+          walletId: wallet.id, 
+          tournamentId: incoming.id, 
+          entryFee: incoming.entryFee ?? 0, 
+          status: "PENDING", 
+          bookedByAdmin: true, 
+          roster 
+        },
+      }).catch(() => {});
+      bookedIds.add(wallet.id);
+    }
+  }
 
   return NextResponse.json({ ok: true, count: tournaments.length });
 }
