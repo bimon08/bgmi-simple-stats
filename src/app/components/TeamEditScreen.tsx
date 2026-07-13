@@ -24,9 +24,10 @@ export default function TeamEditScreen({
   editingPlayerIdx, setEditingPlayerIdx,
   save, onSave, onClose,
 }: Props) {
+  const liveTeam = tournament.teams.find((t) => t.id === team.id) || team;
   const standing = tournament.geminiData?.groups.find((g) => {
     const assignedId = tournament.assignments?.[g.group];
-    return assignedId === team.id;
+    return assignedId === liveTeam.id;
   });
   const pp = standing?.totals.totalPlacementPoints ?? 0;
   const kp = standing?.totals.totalKills ?? 0;
@@ -48,12 +49,11 @@ export default function TeamEditScreen({
         <button onClick={onClose} className="p-2 rounded-xl press-scale" style={{ background:"rgba(255,255,255,0.06)" }}>
           <ChevronDown className="h-5 w-5 text-white rotate-90" />
         </button>
-        <p className="text-base font-bold text-white truncate mx-3 flex-1 text-center">{team.name}</p>
-        <div className="flex items-center gap-2">
+        <p className="text-base font-bold text-white truncate mx-3 flex-1 text-center">{liveTeam.name}</p>        <div className="flex items-center gap-2">
           <button onClick={onSave} className="flex items-center gap-2 px-5 py-2 rounded-full font-semibold text-sm press-scale" style={{ background:"rgba(139,92,246,0.25)", border:"1px solid rgba(139,92,246,0.4)", color:"#c4b5fd" }}>
             <Save className="h-4 w-4" /> Save
           </button>
-          <button onClick={() => { save({ ...tournament, teams: tournament.teams.filter((t) => t.id !== team.id) }); onClose(); }} className="p-2 rounded-xl press-scale" style={{ background:"rgba(239,68,68,0.1)", color:"rgba(239,68,68,0.7)" }}>
+          <button onClick={() => { save({ ...tournament, teams: tournament.teams.filter((t) => t.id !== liveTeam.id) }); onClose(); }} className="p-2 rounded-xl press-scale" style={{ background:"rgba(239,68,68,0.1)", color:"rgba(239,68,68,0.7)" }}>
             <Trash2 className="h-4 w-4" />
           </button>
         </div>
@@ -95,7 +95,7 @@ export default function TeamEditScreen({
               {statPill(<BarChart2 className="h-3.5 w-3.5" style={{ color:"#a78bfa" }} />, "TP", tp)}
               {statPill(<Trophy className="h-3.5 w-3.5" style={{ color:"#a78bfa" }} />, "WIN", wins)}
               {statPill(<Hash className="h-3.5 w-3.5" style={{ color:"#a78bfa" }} />, "MP", matchCount)}
-              {statPill(<ListOrdered className="h-3.5 w-3.5" style={{ color:"#a78bfa" }} />, "Slot", team.slot ?? "—")}
+              {statPill(<ListOrdered className="h-3.5 w-3.5" style={{ color:"#a78bfa" }} />, "Slot", liveTeam.slot ?? "—")}
             </div>
             <div className="grid grid-cols-2 gap-3 pt-1">
               <button className="py-3 rounded-2xl text-sm font-semibold press-scale" style={{ background:"rgba(124,58,237,0.3)", color:"#e9d5ff" }}>Add bonus points</button>
@@ -107,7 +107,7 @@ export default function TeamEditScreen({
         {/* Edit Players */}
         <div className="rounded-2xl overflow-hidden mb-4" style={{ background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.06)" }}>
           <p className="text-center text-sm font-semibold text-white py-3" style={{ borderBottom:"1px solid rgba(255,255,255,0.06)" }}>Edit Players</p>
-          {(team.players ?? []).map((player, pi) => (
+          {(liveTeam.players ?? []).map((player, pi) => (
             <div key={pi} className="flex items-center gap-3 px-4 py-2.5" style={{ borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
               <div className="h-8 w-8 rounded-xl flex items-center justify-center shrink-0" style={{ background:"rgba(124,58,237,0.15)", border:"1px solid rgba(124,58,237,0.2)" }}>
                 <UserPlus className="h-3.5 w-3.5" style={{ color:"rgba(196,181,253,0.4)" }} />
@@ -119,9 +119,9 @@ export default function TeamEditScreen({
                     defaultValue={player}
                     onBlur={(e) => {
                       const val = e.target.value.trim();
-                      const newPlayers = [...(team.players ?? [])];
+                      const newPlayers = [...(liveTeam.players ?? [])];
                       if (val) newPlayers[pi] = val; else newPlayers.splice(pi, 1);
-                      const updated = { ...tournament, teams: tournament.teams.map((t) => t.id === team.id ? { ...t, players: newPlayers } : t) };
+                      const updated = { ...tournament, teams: tournament.teams.map((t) => t.id === liveTeam.id ? { ...t, players: newPlayers } : t) };
                       save(updated);
                       setEditingPlayerIdx(null);
                     }}
@@ -133,15 +133,15 @@ export default function TeamEditScreen({
                 )}
               </div>
               <button onClick={() => {
-                const newPlayers = (team.players ?? []).filter((_, i) => i !== pi);
-                const updated = { ...tournament, teams: tournament.teams.map((t) => t.id === team.id ? { ...t, players: newPlayers } : t) };
+                const newPlayers = (liveTeam.players ?? []).filter((_, i) => i !== pi);
+                const updated = { ...tournament, teams: tournament.teams.map((t) => t.id === liveTeam.id ? { ...t, players: newPlayers } : t) };
                 save(updated); setEditingPlayerIdx(null);
               }} className="p-1 shrink-0" style={{ color: "rgba(239,68,68,0.5)" }}><Minus className="h-3.5 w-3.5" /></button>
             </div>
           ))}
           <button onClick={() => {
-            const newPlayers = [...(team.players ?? []), ""];
-            const updated = { ...tournament, teams: tournament.teams.map((t) => t.id === team.id ? { ...t, players: newPlayers } : t) };
+            const newPlayers = [...(liveTeam.players ?? []), ""];
+            const updated = { ...tournament, teams: tournament.teams.map((t) => t.id === liveTeam.id ? { ...t, players: newPlayers } : t) };
             save(updated);
             setEditingPlayerIdx(newPlayers.length - 1);
           }} className="w-full py-3 flex items-center justify-center gap-2 text-sm font-medium" style={{ color:"rgba(196,181,253,0.5)" }}>
