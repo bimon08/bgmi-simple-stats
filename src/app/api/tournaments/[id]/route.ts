@@ -61,41 +61,6 @@ export async function PATCH(
     },
   });
 
-  const response = NextResponse.json({ ok: true, isActive: updated.isActive, entryFee: updated.entryFee });
 
-  // When turning ON: auto-book all wallet-matched teams
-  if (body.isActive === true) {
-    autoBook(id, session.user.id, updatedData).catch(() => {});
-  }
-
-  return response;
-}
-
-async function autoBook(tournamentId: string, userId: string, tournament: Record<string, unknown>) {
-  const teams = (tournament.teams ?? []) as Array<{ phone?: string; name?: string; players?: string[] }>;
-  if (!teams.length) return;
-
-  const wallets = await prisma.wallet.findMany({
-    where: { userId, phone: { not: null } },
-    select: { id: true, phone: true },
-  });
-  const existingBookings = await prisma.slotBooking.findMany({
-    where: { tournamentId },
-    select: { walletId: true },
-  });
-  const bookedIds = new Set(existingBookings.map(b => b.walletId));
-  const normalize = (p: string) => { const d = p.replace(/\D/g, ""); return d.length > 10 ? d.slice(-10) : d; };
-
-  for (const team of teams) {
-    if (!team.phone) continue;
-    const phoneDigits = (team.phone as string).replace(/\D/g, "");
-    if (phoneDigits.length < 7) continue;
-    const wallet = wallets.find(w => normalize(w.phone ?? "") === normalize(phoneDigits));
-    if (!wallet || bookedIds.has(wallet.id)) continue;
-    const roster = { teamName: team.name ?? "", players: team.players ?? [] };
-    await prisma.slotBooking.create({
-      data: { walletId: wallet.id, tournamentId, entryFee: (tournament.entryFee as number) ?? 0, status: "PENDING", bookedByAdmin: true, roster },
-    }).catch(() => {});
-    bookedIds.add(wallet.id);
-  }
+  return NextResponse.json({ ok: true, isActive: updated.isActive, entryFee: updated.entryFee });
 }
