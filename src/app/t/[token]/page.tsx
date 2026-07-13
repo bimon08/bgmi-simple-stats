@@ -70,7 +70,6 @@ export default function SharedTournamentPage() {
       name: teamName.trim(),
       phone: teamPhone.replace(/\D/g, "") || undefined,
       players: [],
-      paid: false,
     };
     updateTournament({ ...tournament, teams: [...tournament.teams, newTeam] });
     setTeamName("");

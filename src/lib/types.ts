@@ -6,7 +6,6 @@ export interface Team {
   notes?: string;
   slot?: number;
   players?: string[];
-  paid?: boolean;
   out?: boolean;
 }
 

@@ -1,6 +1,6 @@
 "use client";
 import React, { useState } from "react";
-import { X, ImageIcon, HelpCircle, UserPlus, Phone, Plus, Clipboard, Users, Trophy } from "lucide-react";
+import { X, ImageIcon, HelpCircle, UserPlus, Phone, Plus, Clipboard, Users, Trophy, Search } from "lucide-react";
 import { toast } from "sonner";
 import { Tournament, Team } from "@/lib/types";
 
@@ -56,6 +56,7 @@ export default function AddTeamsScreen({
   isPendingClone = false, onConfirmClone, onCancelClone, onEditTeam,
 }: Props) {
   const [hasChanges, setHasChanges] = useState(false);
+  const [teamSearch, setTeamSearch] = useState("");
   const teams = tournament.teams;
   const isCloneMode = isPendingClone || clonedFromId === tournament.id;
 
@@ -235,9 +236,33 @@ export default function AddTeamsScreen({
         ) : (
           /* Entered tab */
           <div className="space-y-2">
-            {teams.length === 0 ? (
-              <p className="text-center text-sm mt-10" style={{ color:"rgba(196,181,253,0.35)" }}>No teams added yet</p>
-            ) : teams.map((team, idx) => {
+            {/* Search bar */}
+            {teams.length > 3 && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-2xl mb-1" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)" }}>
+                <Search className="h-3.5 w-3.5 shrink-0" style={{ color: "rgba(196,181,253,0.35)" }} />
+                <input
+                  value={teamSearch}
+                  onChange={e => setTeamSearch(e.target.value)}
+                  placeholder="Search by name, phone, player…"
+                  className="flex-1 bg-transparent text-sm text-white placeholder-[rgba(196,181,253,0.3)] focus:outline-none"
+                  style={{ caretColor: "#a78bfa" }}
+                />
+                {teamSearch && <button onClick={() => setTeamSearch("")}><X className="h-3.5 w-3.5" style={{ color: "rgba(196,181,253,0.35)" }} /></button>}
+              </div>
+            )}
+            {(() => {
+              const q = teamSearch.trim().toLowerCase();
+              const qDigits = teamSearch.replace(/\D/g, "");
+              const filtered = !q ? teams : teams.filter(t => {
+                if (t.name.toLowerCase().includes(q)) return true;
+                const ph = (t.phone ?? "").replace(/\D/g, "");
+                if (qDigits.length >= 3 && ph && (ph.includes(qDigits) || ph.endsWith(qDigits))) return true;
+                if (t.players?.some(p => p.toLowerCase().includes(q))) return true;
+                return false;
+              });
+              if (filtered.length === 0 && !q) return <p className="text-center text-sm mt-10" style={{ color:"rgba(196,181,253,0.35)" }}>No teams added yet</p>;
+              if (filtered.length === 0) return <p className="text-center text-sm mt-6" style={{ color: "rgba(196,181,253,0.35)" }}>No teams match &ldquo;{teamSearch}&rdquo;</p>;
+              return filtered.map((team, idx) => {
               const isOut = isCloneMode ? excludedCloneTeams.has(team.id) : !!team.out;
               const toggleOut = () => {
                 setHasChanges(true);
@@ -260,6 +285,9 @@ export default function AddTeamsScreen({
                     onEditTeam?.(team);
                   }}
                 >
+                  {team.slot && (
+                    <span className="text-xs font-bold shrink-0 w-5 text-center" style={{ color:"rgba(139,92,246,0.7)" }}>#{team.slot}</span>
+                  )}
                   <div className="h-9 w-9 rounded-xl flex items-center justify-center shrink-0 text-white text-xs font-bold"
                     style={{ background: avatarColors[idx % avatarColors.length] }}>
                     {initials(team.name)}
@@ -270,23 +298,6 @@ export default function AddTeamsScreen({
                       <p className="text-xs truncate" style={{ color:"rgba(196,181,253,0.45)" }}>{team.players.join(", ")}</p>
                     )}
                   </div>
-                  {team.slot && <span className="text-xs font-bold shrink-0" style={{ color:"rgba(139,92,246,0.7)" }}>#{team.slot}</span>}
-                  {/* Paid / Unpaid badge — tappable, separate from IN/OUT */}
-                  {!isCloneMode && (
-                    <span
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setHasChanges(true);
-                        save({ ...tournament, teams: tournament.teams.map(t => t.id === team.id ? { ...t, paid: !t.paid } : t) });
-                      }}
-                      className="text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 cursor-pointer press-scale"
-                      style={team.paid
-                        ? { background: "rgba(37,211,102,0.15)", color: "#4ade80", border: "1px solid rgba(37,211,102,0.3)" }
-                        : { background: "rgba(255,255,255,0.06)", color: "rgba(196,181,253,0.35)", border: "1px solid rgba(255,255,255,0.08)" }}
-                    >
-                      {team.paid ? "Paid" : "Unpaid"}
-                    </span>
-                  )}
                   {/* IN/OUT toggle switch */}
                   <button
                     onClick={(e) => { e.stopPropagation(); toggleOut(); }}
@@ -301,7 +312,8 @@ export default function AddTeamsScreen({
                   </button>
                 </div>
               );
-            })}
+            });
+            })()}
           </div>
         )}
       </div>

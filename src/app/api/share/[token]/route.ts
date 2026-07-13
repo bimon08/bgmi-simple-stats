@@ -44,9 +44,8 @@ export async function PUT(req: Request, { params }: { params: Promise<{ token: s
   const updated = await prisma.savedTournament.update({
     where: { id: row.id },
     data: {
+      // Only update team data — isActive and entryFee are owner-only settings
       data: mergedData as object,
-      entryFee: incoming.entryFee ?? 0,
-      isActive: incoming.isActive ?? false,
     },
   });
 

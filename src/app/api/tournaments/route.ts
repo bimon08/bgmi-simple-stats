@@ -86,8 +86,8 @@ export async function PUT(req: Request) {
     })
   );
 
-  // Auto-book leaders for active tournaments
-  const activeTournaments = tournaments.filter(t => (t.isActive ?? false) && (t.entryFee ?? 0) > 0);
+  // Auto-book leaders for ALL active tournaments (including free ones)
+  const activeTournaments = tournaments.filter(t => (t.isActive ?? false));
   if (activeTournaments.length > 0) {
     const wallets = await prisma.wallet.findMany({
       where: { userId: caller.userId, phone: { not: null } },

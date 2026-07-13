@@ -7,7 +7,16 @@ export function loadTournaments(): Tournament[] {
   if (typeof window === "undefined") return [];
   const raw = localStorage.getItem(KEY);
   if (raw) {
-    try { return JSON.parse(raw) as Tournament[]; } catch { return []; }
+    try {
+      const all = JSON.parse(raw) as Tournament[];
+      // Deduplicate by ID — keep the most recently updated copy
+      const seen = new Map<string, Tournament>();
+      for (const t of all) {
+        const existing = seen.get(t.id);
+        if (!existing || (t.updatedAt ?? "") >= (existing.updatedAt ?? "")) seen.set(t.id, t);
+      }
+      return [...seen.values()];
+    } catch { return []; }
   }
   // Migrate legacy single tournament
   const legacy = localStorage.getItem(LEGACY_KEY);

@@ -61,7 +61,7 @@ export async function GET(_: Request, { params }: { params: Promise<{ token: str
   // Re-fetch bookings after potential auto-create
   const freshBookings = await prisma.slotBooking.findMany({
     where: { walletId: wallet.id },
-    select: { tournamentId: true, status: true, bookedByAdmin: true, roster: true },
+    select: { id: true, tournamentId: true, status: true, bookedByAdmin: true, roster: true },
   });
   const bookedMap = new Map(freshBookings.map((b) => [b.tournamentId, b]));
 
@@ -73,6 +73,7 @@ export async function GET(_: Request, { params }: { params: Promise<{ token: str
       name: data.name ?? "Tournament",
       entryFee: t.entryFee,
       bookingStatus: booking?.status ?? null,
+      bookingId: booking?.id ?? null,
       bookedByAdmin: booking?.bookedByAdmin ?? false,
       roster: booking?.roster ?? null,
     };

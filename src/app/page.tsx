@@ -92,6 +92,7 @@ export default function TeamsPage() {
   const [showMore, setShowMore] = useState(false);
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
   const toggleCard = (id: string) => setExpandedCards((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const [renamingId, setRenamingId] = useState<string | null>(null);
   const [showAddScreen, setShowAddScreen] = useState(false);
   const [addScreenTab, setAddScreenTab] = useState<"add" | "entered">("add");
   const [addScreenMode, setAddScreenMode] = useState<"create" | "edit">("create");
@@ -300,8 +301,11 @@ export default function TeamsPage() {
 
   const save = useCallback((t: Tournament) => {
     const updated = { ...t, updatedAt: new Date().toISOString() };
+    // Write to localStorage synchronously FIRST so any immediate doSync()
+    // call (e.g. from handleSync) reads the correct updated value.
+    const persisted = upsertTournament(updated, loadTournaments());
     setTournament(updated);
-    setTournaments((prev) => upsertTournament(updated, prev));
+    setTournaments(persisted);
     scheduleSyncDebounce(); // auto-push after 2.5s idle
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -365,8 +369,18 @@ export default function TeamsPage() {
       }
 
       // ── Pull + push shared tournaments (no auth needed) ──────────────────
+      // Build set of owned IDs so we can detect self-imports
+      const ownedIdSet = new Set(ownedLocal.map(t => t.id));
+      // Filter out any self-imports (user imported their own tournament)
+      const cleanedSharedLocal = sharedLocal.filter(st => !ownedIdSet.has(st.id));
+      if (cleanedSharedLocal.length < sharedLocal.length) {
+        // Silently remove self-imports from localStorage
+        const without = loadTournaments().filter(t => !(t.sharedFrom && ownedIdSet.has(t.id)));
+        saveTournaments(without);
+      }
+
       const sharedMerged: Tournament[] = [];
-      for (const st of sharedLocal) {
+      for (const st of cleanedSharedLocal) {
         const code = st.sharedFrom!;
         try {
           // Pull latest from owner's DB
@@ -375,10 +389,12 @@ export default function TeamsPage() {
           const { tournament: remote } = await sRes.json() as { tournament: Tournament };
           // Merge teams (incoming local wins for its teams, remote fills gaps)
           const merged: Tournament = { ...remote, sharedFrom: code, teams: mergeTeams(st.teams ?? [], remote.teams ?? []) };
-          // Push merged back to owner's DB
+          // Strip owner-only fields before pushing so they can't bleed back through the share endpoint
+          const { isActive: _ia, entryFee: _ef, ...sharePayload } = merged;
+          void _ia; void _ef;
           await fetch(`/api/share/${code}`, {
             method: "PUT", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ tournament: merged }),
+            body: JSON.stringify({ tournament: sharePayload }),
           });
           sharedMerged.push(merged);
         } catch { sharedMerged.push(st); }
@@ -416,7 +432,13 @@ export default function TeamsPage() {
         const freshNewer = (f.updatedAt ?? "") >= (s.updatedAt ?? "");
         const base  = freshNewer ? f : s;
         const other = freshNewer ? s : f;
-        ultimateMerged.push({ ...base, teams: mergeTeams(base.teams ?? [], other.teams ?? []) });
+        ultimateMerged.push({
+          ...base,
+          teams: mergeTeams(base.teams ?? [], other.teams ?? []),
+          // Preserve intentional isActive/entryFee changes made mid-sync
+          isActive:  f.isActive  ?? s.isActive,
+          entryFee:  f.entryFee  ?? s.entryFee ?? 0,
+        });
       });
       saveTournaments(ultimateMerged);
       setTournaments(ultimateMerged);
@@ -519,6 +541,7 @@ export default function TeamsPage() {
       ...createTournament(copyName),
       teams: source.teams.map((tm) => ({ ...tm, id: crypto.randomUUID() })),
       pointSystem: source.pointSystem,
+      isActive: false, // copies always start with booking Off
     };
 
     // Store draft in memory — will only be saved if user confirms
@@ -563,7 +586,6 @@ export default function TeamsPage() {
       slot: addForm.slot ? Number(addForm.slot) : undefined,
       players: players.length > 0 ? uniquePlayers(players) : undefined,
       phone: phoneDigits,
-      paid: true,
       out: false, // always IN when manually added
     };
     const updated = { ...tournament, teams: [...tournament.teams, newTeam] };
@@ -622,22 +644,26 @@ export default function TeamsPage() {
       }
 
       // ── Leader / Captain label ───────────────────────────────────────────────
-      // Handles: "Leader - KW", "Leader Name X", "Leader's Name X", "Captain X"
-      const mLeader = line.match(/^(?:[Ll]eader['s\u2019]*|[Cc]aptain)\s+(?:[Nn]ame\s+)?(.+)$/u);
+      // Handles: "Leader - KW", "Leader Name X", "Leader's Name X", "Captain X",
+      //          "Leader Name-777sTOPDAWG" (dash, no space after label)
+      const mLeader = line.match(/^(?:[Ll]eader['\u2019s]*|[Cc]aptain)\s+(?:[Nn]ame\s*)?(.+)$/u);
       if (mLeader) {
-        const raw = stripSep(mLeader[1].trim());
-        // Skip bare "Leader Name" / "Leader:" header-only lines
-        if (/^[Nn]ame\s*$/.test(raw) || raw === '') { continue; }
-        const alts = splitOrAlts(raw);
-        captain = alts[0];
-        alts.slice(1).forEach(p => { if (!isPhone(p)) players.push(p); });
-        labeledHits++; hasStructuredLabel = true; afterPlayerNameLabel = false; continue;
+        // Strip residual "Name[-: ]" not consumed by the optional group
+        let raw = stripSep(mLeader[1].trim()).replace(/^[Nn]ame\s*[-\u2013:\uff1a]?\s*/, '');
+        // If captured value starts with "phone/phn", fall through to phone handler below
+        if (!/^[Pp]h(?:one?|n)/i.test(raw) && !/^[Nn]ame\s*$/.test(raw) && raw !== '') {
+          const alts = splitOrAlts(raw);
+          captain = alts[0];
+          alts.slice(1).forEach(p => { if (!isPhone(p)) players.push(p); });
+          labeledHits++; hasStructuredLabel = true; afterPlayerNameLabel = false; continue;
+        }
       }
 
       // ── Phone label ─────────────────────────────────────────────────────────
-      // Handles: "Phone number", "Phn -", "Ph -", "Leader's phone number"
+      // Handles: "Phone number", "Phn -", "Ph -",
+      //          "Leader's phone number-9362703176" (dash, no space)
       const mPhone = line.match(
-        /^(?:[Ll]er(?:[''\u2019]s?|s)?\s+)?[Pp]h(?:one?|n)\s*(?:[Nn]umber\s*)?[-–:：]?\s+(.+)$/u
+        /^(?:[Ll]eader['\u2019s]*\s+)?[Pp]h(?:one?|n)\s*(?:[Nn]umber)?\s*[-\u2013:\uff1a]?\s*(.+)$/u
       );
       if (mPhone) {
         const raw = stripSep(mPhone[1].trim());
@@ -658,10 +684,12 @@ export default function TeamsPage() {
       }
 
       // ── Player N <value> / Player <value> ────────────────────────────────────
-      // Handles: "Player 2 X", "Player 2. X", "Player 2- X", "Player X"
-      const mPlayer = line.match(/^[Pp]layers?\s+(?:\d+[.\-\s]+)?(.+)$/u);
+      // Handles: "Player 2 X", "Player 2. X", "Player 2- X", "Player X",
+      //          "Player5- Fs exotic" (no space between keyword and digit)
+      const mPlayer = line.match(/^[Pp]layers?\s*(?:\d+\s*[.\-\s]*)?(.+)$/u);
       if (mPlayer) {
         const raw = stripSep(mPlayer[1].trim());
+        if (!raw || isPhone(raw)) { afterPlayerNameLabel = true; continue; }
         splitOrAlts(raw)
           .filter(p => !isPhone(p))
           .forEach(p => { players.push(p); labeledHits++; hasStructuredLabel = true; });
@@ -794,8 +822,18 @@ export default function TeamsPage() {
       if (!res.ok) { toast.error("Code not found — check and try again"); return; }
       const { tournament: t } = await res.json();
       if (!t) { toast.error("Invalid code"); return; }
-      // Store sharedFrom so changes sync back to the owner's DB via the share code
+
       const existing = loadTournaments();
+
+      // Block self-import: user is trying to import their own tournament
+      const ownedIds = new Set(existing.filter(e => !e.sharedFrom).map(e => e.id));
+      if (ownedIds.has(t.id)) {
+        toast.error("That\'s your own tournament — you can\'t import it");
+        setImportCode(""); setShowImportCode(false);
+        return;
+      }
+
+      // Store sharedFrom so changes sync back to the owner's DB via the share code
       const alreadyImported = existing.find(e => e.sharedFrom === code);
       if (alreadyImported) {
         toast.info(`Already have "${t.name}" — it will sync automatically`);
@@ -1087,6 +1125,7 @@ export default function TeamsPage() {
           })()}
 
           {(() => {
+            if (!pageLoaded) return null; // skeleton handles this phase
             const visible = tournaments.filter(t => tournamentTab === 'shared' ? isCollab(t) : !isCollab(t));
             if (visible.length === 0) return (
               <div className="text-center py-16">
@@ -1127,14 +1166,39 @@ export default function TeamsPage() {
                     role="button"
                     tabIndex={0}
                     className="w-full flex items-center gap-3 p-4 pr-12 text-left press-scale cursor-pointer"
-                    onClick={() => toggleCard(t.id)}
-                    onKeyDown={(e) => e.key === "Enter" && toggleCard(t.id)}
+                    onClick={() => renamingId !== t.id && toggleCard(t.id)}
+                    onKeyDown={(e) => e.key === "Enter" && renamingId !== t.id && toggleCard(t.id)}
                   >
                     <div className="h-9 w-9 rounded-xl flex items-center justify-center shrink-0 text-xs font-black" style={{ background: "rgba(124,58,237,0.22)", color: "#a78bfa" }}>
                       {String(i + 1).padStart(2, "0")}
                     </div>
                     <div className="flex-1 min-w-0 text-left">
-                      <p className="text-sm font-bold text-white truncate">{t.name}</p>
+                      {renamingId === t.id ? (
+                        <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                          <input
+                            autoFocus
+                            value={renameValue}
+                            onChange={e => setRenameValue(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === "Enter" && renameValue.trim()) {
+                                const renamed = { ...t, name: renameValue.trim() };
+                                save(renamed);
+                                if (tournament?.id === t.id) setTournament(renamed);
+                                setRenamingId(null);
+                              }
+                              if (e.key === "Escape") { setRenamingId(null); }
+                            }}
+                            className="flex-1 min-w-0 bg-transparent text-sm font-bold text-white focus:outline-none border-b border-violet-500/50"
+                          />
+                          <button onClick={() => { if (renameValue.trim()) { const renamed = { ...t, name: renameValue.trim() }; save(renamed); if (tournament?.id === t.id) setTournament(renamed); } setRenamingId(null); }} className="shrink-0 text-emerald-400 text-xs font-bold px-1">✓</button>
+                          <button onClick={() => setRenamingId(null)} className="shrink-0 text-zinc-500 text-xs px-1">✕</button>
+                        </div>
+                      ) : (
+                        <p
+                          className="text-sm font-bold text-white truncate active:underline"
+                          onDoubleClick={e => { e.stopPropagation(); setRenamingId(t.id); setRenameValue(t.name); }}
+                        >{t.name}</p>
+                      )}
                       <div className="flex items-center gap-2 mt-0.5">
                         <p className="text-xs" style={{ color: "rgba(167,139,250,0.5)" }}>Teams: {t.teams.length}</p>
                         {t.updatedAt && (
@@ -1780,7 +1844,7 @@ export default function TeamsPage() {
       {/* BOOKINGS MODAL */}
       {showBookings && tournament && (() => {
         // kept as IIFE to satisfy tournament guard
-        return <BookingsModal tournament={tournament} save={save} onClose={() => setShowBookings(false)} />;
+        return <BookingsModal tournament={tournament} save={save} onClose={() => setShowBookings(false)} onSyncNow={handleSync} />;
 
       })()}
 

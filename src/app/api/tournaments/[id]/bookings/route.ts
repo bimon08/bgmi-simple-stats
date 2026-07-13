@@ -25,5 +25,5 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
   const pending = bookings.filter((b) => b.status === "PENDING").length;
   const confirmed = bookings.filter((b) => b.status === "CONFIRMED").length;
 
-  return NextResponse.json({ bookings, pending, confirmed, entryFee: tournament.entryFee });
+  return NextResponse.json({ bookings, pending, confirmed, entryFee: tournament.entryFee, isActive: tournament.isActive });
 }
