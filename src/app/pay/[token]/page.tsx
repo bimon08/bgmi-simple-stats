@@ -215,13 +215,14 @@ export default function PlayerWalletPage({ params }: { params: Promise<{ token: 
           <p className="text-[11px] font-semibold text-zinc-600 uppercase tracking-wider mb-3">Open Tournaments</p>
           <div className="space-y-3">
             {tournaments.map((t) => {
-              const booked    = !!t.bookingStatus && t.bookingStatus !== "SKIPPED";
+              const booked    = !!t.bookingStatus;
               const confirmed = t.bookingStatus === "CONFIRMED";
+              const skipped   = t.bookingStatus === "SKIPPED";
               const canAfford = balance >= t.entryFee;
               const isBusy    = bookingId === t.id;
               const isCancelling = cancellingId === t.id;
-              const selfBooked = booked && !t.bookedByAdmin && !confirmed;
-              const canEdit = booked && !confirmed; // both self and admin-booked can edit
+              const selfBooked = booked && !t.bookedByAdmin && !confirmed && !skipped;
+              const canEdit = booked && !confirmed && !skipped; // skipped teams can't edit
               const showForm  = rosterForm?.id === t.id;
               const openEdit = canEdit && !showForm ? () => {
                 const existingPlayers = t.roster?.players ?? [];
