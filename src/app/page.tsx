@@ -1365,7 +1365,6 @@ export default function TeamsPage() {
             setEditingTeam(team);
             setEditTeamForm({
               name: team.name,
-              slot: team.slot ? String(team.slot) : "",
               tags: "",
               players: (team.players ?? []).join(", "),
               phone: team.phone ?? "",
