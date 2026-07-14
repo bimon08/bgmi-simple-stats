@@ -283,9 +283,10 @@ export default function TeamsPage() {
       };
     });
 
-    // Add 0-stat rows for registered teams that didn't appear in any group
+    // Add 0-stat rows for registered IN teams that didn't appear in any group
     const assignedTeamIds = new Set(Object.values(assignMap));
     t.teams.forEach((team) => {
+      if (team.out) return; // skip OUT teams
       if (assignedTeamIds.has(team.id)) return; // already in standings
       rows.push({
         teamId: team.id,
@@ -557,7 +558,7 @@ export default function TeamsPage() {
 
     const draft: Tournament = {
       ...createTournament(copyName),
-      teams: source.teams.map((tm) => ({ ...tm, id: crypto.randomUUID() })),
+      teams: source.teams.filter((tm) => !tm.out).map((tm) => ({ ...tm, id: crypto.randomUUID(), out: true })),
       pointSystem: source.pointSystem,
       isActive: false, // copies always start with booking Off
     };
