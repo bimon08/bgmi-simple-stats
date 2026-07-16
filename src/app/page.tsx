@@ -965,16 +965,29 @@ export default function TeamsPage() {
     const ps = tournament?.pointSystem ?? DEFAULT_BGMI_POINTS;
     const groups = raw.groups.map((g) => {
       // Normalize matches: fill in missing placementPoints, teamKills, matchPoints
+      // Also filter garbage player names from playerKills
+      const isValidName = (name: string): boolean => {
+        const trimmed = name.trim();
+        if (!trimmed || trimmed.length <= 1) return false;
+        if (/^\d+$/.test(trimmed)) return false;
+        return true;
+      };
       const matches = g.matches.map((m) => {
-        const teamKills = Object.values(m.playerKills ?? {}).reduce((a, b) => a + b, 0);
+        // Filter out garbage keys from playerKills
+        const cleanKills: Record<string, number> = {};
+        Object.entries(m.playerKills ?? {}).forEach(([name, kills]) => {
+          if (isValidName(name)) cleanKills[name] = kills;
+        });
+        const teamKills = Object.values(cleanKills).reduce((a, b) => a + b, 0);
         const placementPoints = ps.positionPoints[m.position - 1] ?? 0;
         const matchPoints = placementPoints + teamKills * ps.killPoints;
-        return { ...m, teamKills, placementPoints, matchPoints };
+        return { ...m, playerKills: cleanKills, teamKills, placementPoints, matchPoints };
       });
-      // Normalize players: accept array or object → always string[]
-      const players: string[] = Array.isArray(g.players)
+      // Normalize players: accept array or object → always string[], filter garbage
+      const rawPlayers: string[] = Array.isArray(g.players)
         ? g.players
         : Object.keys(g.players as unknown as Record<string, number>);
+      const players = rawPlayers.filter(isValidName);
       // Compute totals from matches
       const totals = {
         totalPoints: matches.reduce((a, m) => a + m.matchPoints, 0),
@@ -1051,17 +1064,53 @@ export default function TeamsPage() {
         (team.players ?? []).forEach((p) => allRegistered.set(p.toLowerCase(), team.id))
       );
 
+      // Helper: check if a player name is garbage (numeric, single char, etc.)
+      const isGarbageName = (name: string): boolean => {
+        const trimmed = name.trim();
+        if (!trimmed || trimmed.length <= 1) return true;
+        if (/^\d+$/.test(trimmed)) return true; // pure numbers like "0", "1"
+        if (/^[^a-zA-Z]*$/.test(trimmed) && trimmed.length < 3) return true; // no letters and short
+        return false;
+      };
+
+      // Helper: fuzzy match — normalize and check if two names refer to the same player
+      const normalize = (s: string) => s.toLowerCase().replace(/[\s_\-\.]+/g, '').replace(/[^a-z0-9]/g, '');
+      const isSimilar = (a: string, b: string): boolean => {
+        const na = normalize(a);
+        const nb = normalize(b);
+        if (!na || !nb) return false;
+        if (na === nb) return true;
+        if (na.includes(nb) || nb.includes(na)) return true;
+        // Levenshtein-like: if names are close enough (within 2 edits for short names)
+        if (na.length >= 4 && nb.length >= 4) {
+          const shorter = na.length <= nb.length ? na : nb;
+          const longer = na.length > nb.length ? na : nb;
+          if (longer.includes(shorter)) return true;
+          // Check prefix match (at least 70% of shorter name)
+          const prefixLen = Math.ceil(shorter.length * 0.7);
+          if (longer.startsWith(shorter.slice(0, prefixLen))) return true;
+        }
+        return false;
+      };
+
       const enrichedTeams = tournament.teams.map((team) => {
         const matchedGroup = data.groups.find((g) => autoAssignments[g.group] === team.id);
         if (!matchedGroup) return team;
-        const discovered = matchedGroup.players; // already string[]
+        const discovered = matchedGroup.players.filter((p) => !isGarbageName(p));
         const existing = team.players ?? [];
         const existingLower = new Set(existing.map((p) => p.toLowerCase()));
         const newPlayers = discovered.filter((p) => {
           const k = p.toLowerCase();
-          if (existingLower.has(k)) return false; // already on this team
+          if (existingLower.has(k)) return false; // exact match — already on this team
+          // Fuzzy match — if AI name is similar to any existing roster player, skip it
+          if (existing.some((e) => isSimilar(e, p))) return false;
           const owner = allRegistered.get(k);
-          return !owner || owner === team.id; // skip if owned by a different team
+          if (owner && owner !== team.id) return false; // owned by a different team
+          // Also check fuzzy against all registered players on other teams
+          for (const [regName, regTeamId] of allRegistered.entries()) {
+            if (regTeamId !== team.id && isSimilar(regName, p.toLowerCase())) return false;
+          }
+          return true;
         });
         if (newPlayers.length === 0) return team;
         return { ...team, players: uniquePlayers([...existing, ...newPlayers]) };
