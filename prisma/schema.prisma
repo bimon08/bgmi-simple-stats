@@ -12,13 +12,14 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  name      String?
-  image     String?
-  rules     String[] @default([])
-  createdAt DateTime @default(now()) @map("created_at")
-  wallets   Wallet[]
+  id          String   @id @default(uuid())
+  email       String   @unique
+  name        String?
+  image       String?
+  rules       String[] @default([])
+  sharedCodes String[] @default([]) @map("shared_codes")
+  createdAt   DateTime @default(now()) @map("created_at")
+  wallets     Wallet[]
   savedTournaments SavedTournament[]
 
   @@map("users")

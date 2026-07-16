@@ -19,8 +19,17 @@ export async function GET(req: Request) {
     if (shortCode)  t.shortCode  = shortCode;
     return t;
   });
+  // Also fetch the user's shared codes for imported tournaments
+  const user = await prisma.user.findUnique({
+    where: { id: caller.userId },
+    select: { sharedCodes: true },
+  });
 
-  return NextResponse.json({ tournaments, isCollaborator: caller.isCollaborator });
+  return NextResponse.json({
+    tournaments,
+    sharedCodes: user?.sharedCodes ?? [],
+    isCollaborator: caller.isCollaborator,
+  });
 }
 
 // PUT /api/tournaments — server-side team-level merge upsert
@@ -28,8 +37,16 @@ export async function PUT(req: Request) {
   const caller = await resolveAuth(req);
   if (!caller) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const { tournaments } = await req.json() as { tournaments: Tournament[] };
+  const { tournaments, sharedCodes } = await req.json() as { tournaments: Tournament[]; sharedCodes?: string[] };
   if (!Array.isArray(tournaments)) return NextResponse.json({ error: "Invalid" }, { status: 400 });
+
+  // Persist shared codes if provided
+  if (Array.isArray(sharedCodes)) {
+    await prisma.user.update({
+      where: { id: caller.userId },
+      data: { sharedCodes },
+    });
+  }
 
   await Promise.all(
     tournaments.map(async (incoming) => {

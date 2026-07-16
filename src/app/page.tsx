@@ -170,7 +170,7 @@ export default function TeamsPage() {
       .then((r) => {
         return r.ok ? r.json() : null;
       })
-      .then((json) => {
+      .then(async (json) => {
         if (!json?.tournaments) {
           // Server unavailable — fall back to local
           setTournaments(local);
@@ -180,6 +180,7 @@ export default function TeamsPage() {
           return;
         }
         const remote: Tournament[] = json.tournaments;
+        const serverSharedCodes: string[] = json.sharedCodes ?? [];
         const remoteFiltered = remote.filter((t: Tournament) => !deletedIds.has(t.id));
         const remoteMap = new Map(remoteFiltered.map((t: Tournament) => [t.id, t]));
         const localMap  = new Map(local.map((t) => [t.id, t]));
@@ -205,6 +206,21 @@ export default function TeamsPage() {
           const other = serverNewer ? l! : r!;
           merged.push({ ...base, teams: mergeTeams(base.teams ?? [], other.teams ?? [], !serverNewer) });
         });
+
+        // Also pull any shared tournaments that exist on server but not locally
+        const localSharedCodes = new Set(local.filter(t => t.sharedFrom).map(t => t.sharedFrom!));
+        for (const code of serverSharedCodes) {
+          if (localSharedCodes.has(code)) continue; // already have it
+          try {
+            const sRes = await fetch(`/api/share/${code}`);
+            if (!sRes.ok) continue;
+            const { tournament: t } = await sRes.json();
+            if (t && !merged.some(m => m.id === t.id)) {
+              merged.push({ ...t, sharedFrom: code, updatedAt: new Date().toISOString() });
+            }
+          } catch { /* skip */ }
+        }
+
         saveTournaments(merged);
         setTournaments(merged);
         setPastTeams(syncPastTeamsFromTournaments(merged));
@@ -406,12 +422,16 @@ export default function TeamsPage() {
             teams: mergeTeams(base.teams ?? [], other.teams ?? [], localNewer),
           });
         });
-        // Always push merged data to server
+        // Always push merged data to server, including shared codes
         const pushPayload = ownedMerged.filter(t => !deletedIds.has(t.id));
-        if (pushPayload.length > 0) {
+        const allSharedCodes = loadTournaments()
+          .filter(t => t.sharedFrom)
+          .map(t => t.sharedFrom!)
+          .filter((v, i, a) => a.indexOf(v) === i); // unique
+        if (pushPayload.length > 0 || allSharedCodes.length > 0) {
           const pushRes = await authFetch("/api/tournaments", {
             method: "PUT", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ tournaments: pushPayload }),
+            body: JSON.stringify({ tournaments: pushPayload, sharedCodes: allSharedCodes }),
           });
           if (pushRes.status === 401) { setSyncStatus('unauthed'); return; }
           if (!pushRes.ok) throw new Error("Sync push failed");
