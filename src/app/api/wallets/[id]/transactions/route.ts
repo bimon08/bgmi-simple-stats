@@ -1,15 +1,15 @@
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
-import { auth } from "@root/auth";
+import { resolveAuth } from "@/lib/resolveAuth";
 
 const MAX_TRANSACTIONS = 10;
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const caller = await resolveAuth(req);
+  if (!caller) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await params;
-  const wallet = await prisma.wallet.findFirst({ where: { id, userId: session.user.id } });
+  const wallet = await prisma.wallet.findFirst({ where: { id, userId: caller.userId } });
   if (!wallet) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const { amount, note } = await req.json();

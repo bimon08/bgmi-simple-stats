@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { Tournament } from "@/lib/types";
+import { authFetch } from "@/lib/authFetch";
 
 interface BookingRow {
   id: string;
@@ -40,18 +41,18 @@ export default function BookingsModal({ tournament, save, onClose, onSyncNow }: 
   const toggleSkip = async (bookingId: string, currentStatus: string) => {
     setSkipProcessing(prev => new Set(prev).add(bookingId));
     const newStatus = currentStatus === "SKIPPED" ? "PENDING" : "SKIPPED";
-    await fetch(`/api/tournaments/${tournament.id}/bookings/${bookingId}`, { 
+    await authFetch(`/api/tournaments/${tournament.id}/bookings/${bookingId}`, { 
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: newStatus })
     });
-    const d = await fetch(`/api/tournaments/${tournament.id}/bookings`).then(r => r.json());
+    const d = await authFetch(`/api/tournaments/${tournament.id}/bookings`).then(r => r.json());
     setData(d);
     setSkipProcessing(prev => { const n = new Set(prev); n.delete(bookingId); return n; });
   };
 
   useEffect(() => {
-    fetch(`/api/tournaments/${tournament.id}/bookings`)
+    authFetch(`/api/tournaments/${tournament.id}/bookings`)
       .then(r => r.json())
       .then((d: BookingsData) => {
         setData(d);
@@ -68,12 +69,12 @@ export default function BookingsModal({ tournament, save, onClose, onSyncNow }: 
 
   const debitAll = async () => {
     setDebiting(true);
-    const res = await fetch(`/api/tournaments/${tournament.id}/bookings/debit`, { method: "POST" });
+    const res = await authFetch(`/api/tournaments/${tournament.id}/bookings/debit`, { method: "POST" });
     const json = await res.json();
     setDebiting(false);
     if (json.ok) {
       toast.success(`Debited ₹${tournament.entryFee ?? 0} from ${json.debited} player${json.debited !== 1 ? "s" : ""}`);
-      fetch(`/api/tournaments/${tournament.id}/bookings`).then(r => r.json()).then(setData);
+      authFetch(`/api/tournaments/${tournament.id}/bookings`).then(r => r.json()).then(setData);
     } else toast.error("Debit failed");
   };
 
@@ -114,7 +115,7 @@ export default function BookingsModal({ tournament, save, onClose, onSyncNow }: 
               const next = !isActive;
               setIsActive(next);
               save({ ...tournament, isActive: next });
-              const res = await fetch(`/api/tournaments/${tournament.id}`, {
+              const res = await authFetch(`/api/tournaments/${tournament.id}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ isActive: next }),

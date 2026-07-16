@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { formatIndianPhone } from "@/lib/phone";
+import { authFetch } from "@/lib/authFetch";
 
 type Transaction = { id: string; walletId: string; amount: number; note: string; createdAt: string };
 type Wallet = { id: string; playerName: string; shareToken: string; phone: string | null; balance: number; transactions: Transaction[]; createdAt: string };
@@ -40,7 +41,7 @@ function WalletInner() {
   const fetchWallets = useCallback(async () => {
     if (!session) return;
     setLoading(true);
-    const res = await fetch("/api/wallets");
+    const res = await authFetch("/api/wallets");
     const data = await res.json();
     setWallets(data);
     setLoading(false);
@@ -64,7 +65,7 @@ function WalletInner() {
     router.push(`/wallet?player=${w.id}`, { scroll: false });
     setSelected({ ...w, transactions: [] }); // instant — shows balance/name right away
     setTxnsLoading(true);
-    const res = await fetch(`/api/wallets/${w.id}`);
+    const res = await authFetch(`/api/wallets/${w.id}`);
     const full = await res.json();
     setSelected(full);
     setTxnsLoading(false);
@@ -93,7 +94,7 @@ function WalletInner() {
     if (!newName.trim() || !newPhone.trim()) return;
     const dup = wallets.find(w => w.phone === newPhone);
     if (dup) { toast.error(`${dup.playerName} already has this number`); return; }
-    const res = await fetch("/api/wallets", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ playerName: newName.trim(), phone: newPhone.trim() || null }) });
+    const res = await authFetch("/api/wallets", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ playerName: newName.trim(), phone: newPhone.trim() || null }) });
     if (!res.ok) { toast.error("Failed"); return; }
     toast.success("Player added!");
     setNewName(""); setNewPhone(""); setShowAdd(false);
@@ -107,24 +108,24 @@ function WalletInner() {
     const finalAmt = txnType === "owe" ? -amt : amt;
     const note = txnNote.trim() || (txnType === "owe" ? "Entry Fee" : "Prize");
     setTxnLoading(true);
-    const res = await fetch(`/api/wallets/${selected.id}/transactions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ amount: finalAmt, note }) });
+    const res = await authFetch(`/api/wallets/${selected.id}/transactions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ amount: finalAmt, note }) });
     setTxnLoading(false);
     if (!res.ok) { toast.error("Failed"); return; }
     toast.success(txnType === "owe" ? "Debited!" : "Credited!");
     setTxnAmount(""); setTxnNote(""); setShowTxn(false);
-    const updated = await (await fetch(`/api/wallets/${selected.id}`)).json();
+    const updated = await (await authFetch(`/api/wallets/${selected.id}`)).json();
     setSelected(updated);
-    fetch("/api/wallets").then(r => r.json()).then(setWallets);
+    authFetch("/api/wallets").then(r => r.json()).then(setWallets);
   };
 
   const deleteTransaction = async (txnId: string) => {
     if (!confirm("Delete this transaction?")) return;
     setDeletingId(txnId);
-    await fetch(`/api/transactions/${txnId}`, { method: "DELETE" });
+    await authFetch(`/api/transactions/${txnId}`, { method: "DELETE" });
     setDeletingId(null);
-    const updated = await (await fetch(`/api/wallets/${selected!.id}`)).json();
+    const updated = await (await authFetch(`/api/wallets/${selected!.id}`)).json();
     setSelected(updated);
-    fetch("/api/wallets").then(r => r.json()).then(setWallets);
+    authFetch("/api/wallets").then(r => r.json()).then(setWallets);
   };
 
   const copyLink = (token: string) => {

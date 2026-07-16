@@ -1,14 +1,14 @@
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
-import { auth } from "@root/auth";
+import { resolveAuth } from "@/lib/resolveAuth";
 
 // GET /api/wallets — list all wallets (uses stored balance column)
-export async function GET() {
-  const session = await auth();
-  if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+export async function GET(req: Request) {
+  const caller = await resolveAuth(req);
+  if (!caller) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const wallets = await prisma.wallet.findMany({
-    where: { userId: session.user.id },
+    where: { userId: caller.userId },
     include: { transactions: { orderBy: { createdAt: "desc" } } },
     orderBy: { createdAt: "desc" },
   });
@@ -17,14 +17,14 @@ export async function GET() {
 
 // POST /api/wallets — create new player wallet
 export async function POST(req: Request) {
-  const session = await auth();
-  if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const caller = await resolveAuth(req);
+  if (!caller) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { playerName, phone } = await req.json();
   if (!playerName) return NextResponse.json({ error: "Name required" }, { status: 400 });
 
   const wallet = await prisma.wallet.create({
-    data: { userId: session.user.id, playerName, phone: phone || null },
+    data: { userId: caller.userId, playerName, phone: phone || null },
   });
   return NextResponse.json(wallet);
 }

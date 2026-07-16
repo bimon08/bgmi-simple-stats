@@ -1,16 +1,21 @@
 "use client";
 import React, { useState } from "react";
-import { X, ImageIcon, HelpCircle, UserPlus, Phone, Plus, Clipboard, Users, Trophy, Search } from "lucide-react";
+import { X, ImageIcon, HelpCircle, UserPlus, Phone, Plus, Clipboard, Users, Trophy, Search, History, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Tournament, Team } from "@/lib/types";
+import type { PastTeam } from "@/lib/storage";
 
 interface AddForm { name: string; tags: string; phone: string; }
 interface SnapShot { teamCount: number; entryFee: number; isActive: boolean; }
 
 interface Props {
   tournament: Tournament;
-  addScreenTab: "add" | "entered";
-  setAddScreenTab: (tab: "add" | "entered") => void;
+  addScreenTab: "add" | "entered" | "past";
+  setAddScreenTab: (tab: "add" | "entered" | "past") => void;
+  pastTeams: PastTeam[];
+  onAddPastTeam: (pt: PastTeam) => void;
+  onDeletePastTeam: (pt: PastTeam) => void;
+  onUpdatePastTeam: (pt: PastTeam) => void;
   addScreenMode: "create" | "edit";
   addScreenSnapshot: SnapShot | null;
   addForm: AddForm;
@@ -54,9 +59,13 @@ export default function AddTeamsScreen({
   handleDeleteTournament, save,
   setShowAddScreen, setShowCreate, setAddScreenSnapshot,
   isPendingClone = false, onConfirmClone, onCancelClone, onEditTeam,
+  pastTeams, onAddPastTeam, onDeletePastTeam, onUpdatePastTeam,
 }: Props) {
   const [hasChanges, setHasChanges] = useState(false);
   const [teamSearch, setTeamSearch] = useState("");
+  const [pastSearch, setPastSearch] = useState("");
+  const [expandedPast, setExpandedPast] = useState<string | null>(null);
+  const [confirmDeletePast, setConfirmDeletePast] = useState<PastTeam | null>(null);
   const teams = tournament.teams;
   const isCloneMode = isPendingClone || clonedFromId === tournament.id;
 
@@ -75,22 +84,31 @@ export default function AddTeamsScreen({
       </div>
 
       {/* Tabs */}
+      {(() => {
+        const currentNames = new Set(teams.map(t => t.name.toLowerCase().trim()));
+        const availablePastCount = pastTeams.filter(pt => !currentNames.has(pt.name.toLowerCase().trim())).length;
+        return (
       <div className="mx-6 mb-4 shrink-0 flex rounded-2xl overflow-hidden" style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(124,58,237,0.2)" }}>
-        {(["add","entered"] as const).map((tab) => (
+        {(["add","entered","past"] as const).map((tab) => (
           <button key={tab} onClick={() => setAddScreenTab(tab)}
             className="flex-1 py-3 text-sm font-semibold capitalize flex items-center justify-center gap-2 transition-colors"
             style={{ color: addScreenTab === tab ? "#c4b5fd" : "rgba(196,181,253,0.4)", borderBottom: addScreenTab === tab ? "2px solid #8b5cf6" : "2px solid transparent" }}>
-            {tab === "entered" ? "Entered" : "Add"}
+            {tab === "entered" ? "Entered" : tab === "past" ? "Past" : "Add"}
             {tab === "entered" && teams.length > 0 && (
               <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ background:"#7c3aed", color:"#fff" }}>{teams.length}</span>
+            )}
+            {tab === "past" && availablePastCount > 0 && (
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ background:"rgba(124,58,237,0.3)", color:"#c4b5fd" }}>{availablePastCount}</span>
             )}
           </button>
         ))}
       </div>
+        );
+      })()}
 
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto px-6 pb-40">
-        {addScreenTab === "add" ? (
+        {addScreenTab === "add" && (
           <>
             {/* Logo + Tags */}
             <div className="grid grid-cols-2 gap-3 mb-5">
@@ -233,7 +251,8 @@ export default function AddTeamsScreen({
               <Users className="h-4 w-4" />+ Add Team
             </button>
           </>
-        ) : (
+        )}
+        {addScreenTab === "entered" && (
           /* Entered tab */
           <div className="space-y-2">
             {/* Search bar */}
@@ -311,6 +330,143 @@ export default function AddTeamsScreen({
               );
             });
             })()}
+          </div>
+        )}
+
+        {/* ─── PAST TAB ─── */}
+        {addScreenTab === "past" && (
+          <div className="space-y-3">
+            {/* Search */}
+            <div className="relative mb-2">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5" style={{ color:"rgba(196,181,253,0.35)" }} />
+              <input
+                type="text" placeholder="Search past teams..."
+                value={pastSearch} onChange={(e) => setPastSearch(e.target.value)}
+                className="w-full pl-10 pr-4 py-2.5 rounded-xl text-sm text-white placeholder-white/20 focus:outline-none"
+                style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(124,58,237,0.15)" }}
+              />
+            </div>
+            {(() => {
+              const currentNames = new Set(teams.map(t => t.name.toLowerCase().trim()));
+              const filtered = pastTeams
+                .filter(pt => !currentNames.has(pt.name.toLowerCase().trim()))
+                .filter(pt => !pastSearch || pt.name.toLowerCase().includes(pastSearch.toLowerCase()) || pt.players.some(p => p.toLowerCase().includes(pastSearch.toLowerCase())));
+              if (filtered.length === 0) return (
+                <div className="text-center py-12">
+                  <History className="h-10 w-10 mx-auto mb-3" style={{ color:"rgba(196,181,253,0.2)" }} />
+                  <p className="text-sm" style={{ color:"rgba(196,181,253,0.4)" }}>
+                    {pastTeams.length === 0 ? "No past teams yet" : "All past teams are already added"}
+                  </p>
+                </div>
+              );
+              return filtered.map((pt, idx) => {
+                const isExpanded = expandedPast === pt.name;
+                return (
+                  <div key={pt.name} className="rounded-2xl overflow-hidden" style={{ background:"rgba(124,58,237,0.08)", border:"1px solid rgba(124,58,237,0.15)" }}>
+                    {/* Collapsed row */}
+                    <div
+                      className="flex items-center gap-3 px-4 py-3 cursor-pointer"
+                      onClick={() => setExpandedPast(isExpanded ? null : pt.name)}
+                    >
+                      <div className="h-9 w-9 rounded-xl flex items-center justify-center shrink-0 text-white text-xs font-bold"
+                        style={{ background: avatarColors[idx % avatarColors.length] }}>
+                        {initials(pt.name)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold truncate text-white">{pt.name}</p>
+                        {!isExpanded && pt.players.length > 0 && (
+                          <p className="text-xs truncate" style={{ color:"rgba(196,181,253,0.45)" }}>{pt.players.join(", ")}</p>
+                        )}
+                      </div>
+                      {!isExpanded && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); onAddPastTeam(pt); toast.success(`${pt.name} added!`); }}
+                          className="p-2 rounded-xl press-scale shrink-0"
+                          style={{ background: "rgba(124,58,237,0.2)" }}
+                        >
+                          <Plus className="h-4 w-4" style={{ color: "#8b5cf6" }} />
+                        </button>
+                      )}
+                      {isExpanded && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setConfirmDeletePast(pt); }}
+                          className="p-2 rounded-xl press-scale shrink-0"
+                          style={{ background: "rgba(239,68,68,0.12)" }}
+                        >
+                          <Trash2 className="h-4 w-4" style={{ color: "rgba(239,68,68,0.7)" }} />
+                        </button>
+                      )}
+                    </div>
+                    {/* Expanded section */}
+                    {isExpanded && (
+                      <div className="px-4 pb-3 space-y-2">
+                        <p className="text-[10px] font-bold tracking-widest" style={{ color:"rgba(139,92,246,0.6)" }}>PLAYERS</p>
+                        {pt.players.length > 0 ? (
+                          <div className="space-y-1">
+                            {pt.players.map((p, pi) => (
+                              <div key={pi} className="flex items-center gap-2 px-3 py-1.5 rounded-lg" style={{ background: "rgba(255,255,255,0.04)" }}>
+                                <span className="text-xs text-white/70">{pi + 1}.</span>
+                                <span className="text-sm text-white flex-1">{p}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-xs" style={{ color:"rgba(196,181,253,0.3)" }}>No players listed</p>
+                        )}
+                        {pt.phone && (
+                          <p className="text-xs" style={{ color:"rgba(196,181,253,0.4)" }}>📞 {pt.phone}</p>
+                        )}
+                        {/* Add player input */}
+                        <div className="flex items-center gap-2 mt-1">
+                          <input
+                            type="text"
+                            placeholder="Add player..."
+                            className="flex-1 bg-transparent text-sm text-white placeholder-white/20 focus:outline-none border-b px-1 py-1.5"
+                            style={{ borderColor: "rgba(124,58,237,0.2)", caretColor: "#a78bfa" }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && (e.target as HTMLInputElement).value.trim()) {
+                                const val = (e.target as HTMLInputElement).value.trim();
+                                onUpdatePastTeam({ ...pt, players: [...pt.players, val] });
+                                (e.target as HTMLInputElement).value = "";
+                                toast.success(`${val} added`);
+                              }
+                            }}
+                          />
+                          <button
+                            onClick={(e) => {
+                              const input = (e.target as HTMLElement).closest("div")?.querySelector("input") as HTMLInputElement;
+                              if (input?.value.trim()) {
+                                onUpdatePastTeam({ ...pt, players: [...pt.players, input.value.trim()] });
+                                toast.success(`${input.value.trim()} added`);
+                                input.value = "";
+                              }
+                            }}
+                            className="p-1.5 rounded-lg press-scale shrink-0"
+                            style={{ background: "rgba(124,58,237,0.2)" }}
+                          >
+                            <Plus className="h-3.5 w-3.5" style={{ color: "#8b5cf6" }} />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              });
+            })()}
+
+            {/* Delete confirm modal */}
+            {confirmDeletePast && (
+              <div className="fixed inset-0 z-[100] flex items-center justify-center" style={{ background: "rgba(0,0,0,0.6)" }} onClick={() => setConfirmDeletePast(null)}>
+                <div className="mx-8 w-full max-w-sm rounded-2xl p-6" style={{ background: "#1a0d35", border: "1px solid rgba(124,58,237,0.3)" }} onClick={(e) => e.stopPropagation()}>
+                  <p className="text-white font-bold text-base mb-1">Delete "{confirmDeletePast.name}"?</p>
+                  <p className="text-xs mb-5" style={{ color: "rgba(196,181,253,0.5)" }}>This team will be removed from your past teams list.</p>
+                  <div className="flex gap-3">
+                    <button onClick={() => setConfirmDeletePast(null)} className="flex-1 py-3 rounded-xl font-bold text-sm press-scale" style={{ background: "rgba(255,255,255,0.06)", color: "rgba(196,181,253,0.6)" }}>Cancel</button>
+                    <button onClick={() => { onDeletePastTeam(confirmDeletePast); setConfirmDeletePast(null); setExpandedPast(null); toast.success(`${confirmDeletePast.name} deleted`); }} className="flex-1 py-3 rounded-xl font-bold text-sm text-white press-scale" style={{ background: "rgba(239,68,68,0.8)" }}>Delete</button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -117,3 +117,53 @@ export function importData(json: string): Tournament {
   upsertTournament(t, all);
   return t;
 }
+
+/* ─── Past Teams Pool ─── */
+export interface PastTeam {
+  name: string;
+  phone?: string;
+  players: string[];
+}
+
+const PAST_TEAMS_KEY = "bgmi_past_teams";
+
+export function loadPastTeams(): PastTeam[] {
+  if (typeof window === "undefined") return [];
+  try {
+    return JSON.parse(localStorage.getItem(PAST_TEAMS_KEY) || "[]") as PastTeam[];
+  } catch { return []; }
+}
+
+export function savePastTeams(teams: PastTeam[]): void {
+  localStorage.setItem(PAST_TEAMS_KEY, JSON.stringify(teams));
+}
+
+/** Collect all teams from all tournaments into the past teams pool (deduped by name) */
+export function syncPastTeamsFromTournaments(tournaments: Tournament[]): PastTeam[] {
+  const existing = loadPastTeams();
+  const byName = new Map<string, PastTeam>();
+  // Existing first
+  existing.forEach(t => byName.set(t.name.toLowerCase().trim(), t));
+  // Then all tournament teams (newer data wins)
+  tournaments.forEach(tour => {
+    tour.teams.forEach(team => {
+      const key = team.name.toLowerCase().trim();
+      // Filter out purely numeric entries (phone numbers, indices) and single chars
+      const cleanPlayers = (team.players ?? []).filter(p => {
+        const trimmed = p.trim();
+        if (!trimmed) return false;
+        if (/^\d+$/.test(trimmed)) return false; // purely numeric
+        if (trimmed.length <= 1) return false; // single char
+        return true;
+      });
+      byName.set(key, {
+        name: team.name,
+        phone: team.phone,
+        players: cleanPlayers,
+      });
+    });
+  });
+  const merged = [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  savePastTeams(merged);
+  return merged;
+}

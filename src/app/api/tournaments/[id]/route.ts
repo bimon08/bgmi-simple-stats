@@ -1,24 +1,24 @@
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
-import { auth } from "@root/auth";
+import { resolveAuth } from "@/lib/resolveAuth";
 
 /**
  * DELETE /api/tournaments/[id]
  * Permanently removes a tournament from the DB for the current user.
  */
 export async function DELETE(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await auth();
-  if (!session?.user?.id)
+  const caller = await resolveAuth(req);
+  if (!caller)
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await params;
 
   // Only delete if it belongs to this user
   const existing = await prisma.savedTournament.findUnique({ where: { id } });
-  if (!existing || existing.userId !== session.user.id)
+  if (!existing || existing.userId !== caller.userId)
     return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   await prisma.savedTournament.delete({ where: { id } });
@@ -35,15 +35,15 @@ export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await auth();
-  if (!session?.user?.id)
+  const caller = await resolveAuth(req);
+  if (!caller)
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await params;
   const body = await req.json() as { isActive?: boolean; entryFee?: number };
 
   const existing = await prisma.savedTournament.findUnique({ where: { id } });
-  if (!existing || existing.userId !== session.user.id)
+  if (!existing || existing.userId !== caller.userId)
     return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   // Build updated data object: patch the JSON blob too so doSync sees consistent value
@@ -64,3 +64,4 @@ export async function PATCH(
 
   return NextResponse.json({ ok: true, isActive: updated.isActive, entryFee: updated.entryFee });
 }
+

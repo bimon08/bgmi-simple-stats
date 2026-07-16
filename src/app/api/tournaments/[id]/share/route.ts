@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
-import { auth } from "@root/auth";
+import { resolveAuth } from "@/lib/resolveAuth";
 
 function makeShortCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -18,14 +18,14 @@ async function uniqueCode(): Promise<string> {
 
 // POST /api/tournaments/[id]/share
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const caller = await resolveAuth(req);
+  if (!caller) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await params;
   const body = await req.json().catch(() => ({}));
   const tournamentData = body.data;
 
-  const row = await prisma.savedTournament.findFirst({ where: { id, userId: session.user.id } });
+  const row = await prisma.savedTournament.findFirst({ where: { id, userId: caller.userId } });
 
   // If token already exists, return immediately — no DB write needed
   if (row?.shareToken && row?.shortCode) {
@@ -46,7 +46,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     });
   } else {
     await prisma.savedTournament.create({
-      data: { id, userId: session.user.id, data: tournamentData ?? {}, shareToken: token, shortCode },
+      data: { id, userId: caller.userId, data: tournamentData ?? {}, shareToken: token, shortCode },
     });
   }
 

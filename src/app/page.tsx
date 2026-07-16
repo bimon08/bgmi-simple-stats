@@ -4,12 +4,13 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Plus, Trash2, X, Minus, Download, Share2, Trophy,
   Clipboard, ClipboardPaste, ChevronDown, ChevronUp, Target,
+  ChevronLeft, ChevronRight,
   Users, MoreHorizontal, FileDown, Database, Table2, Flame,
   ImageIcon, Pencil, UserPlus, ListX, Pen, Star, HelpCircle,
   Flag, ArrowRight, Save, Search, Tag, BarChart2, Hash,
   ListOrdered, TrendingUp, MoreVertical, Phone, RefreshCw,
 } from "lucide-react";
-import { toJpeg } from "html-to-image";
+import html2canvas from "html2canvas-pro";
 import { toast } from "sonner";
 import { Team, Tournament, StandingRow, GeminiOutput, AssignedGroup, PointSystem, DEFAULT_BGMI_POINTS } from "@/lib/types";
 import CreateScreen from "./components/CreateScreen";
@@ -26,11 +27,14 @@ import SYNCED_PLAYERS from "@/data/players.json";
 import {
   loadTournaments, saveTournaments, createTournament,
   upsertTournament, deleteTournamentById, mergeTournaments,
-  getDeletedTournamentIds,
+  getDeletedTournamentIds, syncPastTeamsFromTournaments, loadPastTeams,
 } from "@/lib/storage";
+import type { PastTeam } from "@/lib/storage";
 import { compareTiebreaker } from "@/lib/points";
 import { generatePrompt } from "@/lib/prompt";
 import { formatIndianPhone } from "@/lib/phone";
+import standingsThemes from "@/lib/standingsThemes";
+import { authFetch } from "@/lib/authFetch";
 
 const APP_NAME = "ScoreCalc";
 
@@ -96,7 +100,8 @@ export default function TeamsPage() {
   const toggleCard = (id: string) => setExpandedCards((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [showAddScreen, setShowAddScreen] = useState(false);
-  const [addScreenTab, setAddScreenTab] = useState<"add" | "entered">("add");
+  const [addScreenTab, setAddScreenTab] = useState<"add" | "entered" | "past">("add");
+  const [pastTeams, setPastTeams] = useState<PastTeam[]>([]);
   const [addScreenMode, setAddScreenMode] = useState<"create" | "edit">("create");
   const [addForm, setAddForm] = useState({ name: "", tags: "", phone: "" });
   const [playerInputs, setPlayerInputs] = useState<string[]>([""]);  
@@ -118,6 +123,7 @@ export default function TeamsPage() {
   type SyncStatus = 'idle' | 'pending' | 'syncing' | 'offline' | 'synced' | 'unauthed';
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
   const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const syncInProgress = useRef(false);
   const [showSyncPicker, setShowSyncPicker] = useState(false);
   const [syncPickerTarget, setSyncPickerTarget] = useState<number>(0); // which row we're picking for
   const [startSlot, setStartSlot] = useState(3);
@@ -150,41 +156,73 @@ export default function TeamsPage() {
   const [tournamentTab, setTournamentTab] = useState<'mine' | 'shared'>('mine');
   const [collabDeleteId, setCollabDeleteId] = useState<string | null>(null);
   const [pageLoaded, setPageLoaded] = useState(false);
+  const [themeIdx, setThemeIdx] = useState(0);
+  const themeScrollRef = useRef<HTMLDivElement>(null);
+  const [slotThemeIdx, setSlotThemeIdx] = useState(0);
+  const slotThemeScrollRef = useRef<HTMLDivElement>(null);
 
-  // Load local immediately, then silently pull + merge from DB on mount
+  // Online-first: fetch from server first, fall back to local if offline
   useEffect(() => {
     const local = loadTournaments();
-    setTournaments(local);
-    setPageLoaded(true);
-    fetch("/api/tournaments")
-      .then((r) => r.ok ? r.json() : null)
+    const deletedIds = getDeletedTournamentIds();
+
+    authFetch("/api/tournaments")
+      .then((r) => {
+        if (r.status === 401) {
+          // Not authenticated — redirect to login
+          window.location.href = "/login";
+          return null;
+        }
+        return r.ok ? r.json() : null;
+      })
       .then((json) => {
-        if (!json?.tournaments) return;
+        if (!json?.tournaments) {
+          // Server unavailable — fall back to local
+          setTournaments(local);
+          setPastTeams(syncPastTeamsFromTournaments(local));
+          setPageLoaded(true);
+          setSyncStatus('offline');
+          return;
+        }
         const remote: Tournament[] = json.tournaments;
-        const deletedIds = getDeletedTournamentIds();
         const remoteFiltered = remote.filter((t: Tournament) => !deletedIds.has(t.id));
+        const remoteMap = new Map(remoteFiltered.map((t: Tournament) => [t.id, t]));
         const localMap  = new Map(local.map((t) => [t.id, t]));
-        const remoteMap = new Map(remoteFiltered.map((t) => [t.id, t]));
-        const allIds = new Set([...localMap.keys(), ...remoteMap.keys()]);
+        const allRemoteIds = new Set(remote.map((t: Tournament) => t.id));
+        const allIds = new Set([...remoteMap.keys(), ...localMap.keys()]);
         const merged: Tournament[] = [];
         allIds.forEach((id) => {
-          const l = localMap.get(id);
           const r = remoteMap.get(id);
-          if (!l) { merged.push(r!); return; }
-          if (!r) { merged.push(l);  return; }
-          const lTs = l.updatedAt ?? l.createdAt ?? "";
-          const rTs = r.updatedAt ?? r.createdAt ?? "";
-          const base  = lTs >= rTs ? l : r;
-          const other = lTs >= rTs ? r : l;
-          merged.push({ ...base, teams: mergeTeams(base.teams ?? [], other.teams ?? [], lTs >= rTs) });
+          const l = localMap.get(id);
+          if (r && !l) { merged.push(r); return; }
+          if (l && !r) {
+            // Local-only: keep only if never synced (brand new, unsaved)
+            if (!allRemoteIds.has(id) && !deletedIds.has(id)) {
+              merged.push(l);
+            }
+            return;
+          }
+          // Both exist — server wins, merge teams
+          const rTs = r!.updatedAt ?? r!.createdAt ?? "";
+          const lTs = l!.updatedAt ?? l!.createdAt ?? "";
+          const serverNewer = rTs >= lTs;
+          const base  = serverNewer ? r! : l!;
+          const other = serverNewer ? l! : r!;
+          merged.push({ ...base, teams: mergeTeams(base.teams ?? [], other.teams ?? [], !serverNewer) });
         });
         saveTournaments(merged);
         setTournaments(merged);
+        setPastTeams(syncPastTeamsFromTournaments(merged));
+        setPageLoaded(true);
         setSyncStatus('synced');
       })
       .catch(() => {
-        // If online but failed, auto-retry once after 5s
-        if (navigator.onLine) setTimeout(() => doSync(false), 5000);
+        // Offline or network error — fall back to local
+        setTournaments(local);
+        setPastTeams(syncPastTeamsFromTournaments(local));
+        setPageLoaded(true);
+        if (!navigator.onLine) setSyncStatus('offline');
+        else setTimeout(() => doSync(false), 5000);
       });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -200,15 +238,19 @@ export default function TeamsPage() {
   // Sync when tab comes back into focus (catches collaborator changes at no extra cost)
   useEffect(() => {
     const onVisible = () => {
-      if (document.visibilityState === 'visible' && navigator.onLine &&
-          (syncStatus === 'synced' || syncStatus === 'idle')) {
+      if (document.visibilityState === 'visible' && navigator.onLine) {
+        // If a debounced sync is pending, fire it immediately instead of waiting
+        if (syncTimer.current) {
+          clearTimeout(syncTimer.current);
+          syncTimer.current = null;
+        }
         doSync(false);
       }
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [syncStatus]);
+  }, []);
 
 
   // Native back-button: push a history entry whenever any overlay opens, pop to close the top-most one
@@ -311,15 +353,20 @@ export default function TeamsPage() {
     const updated = { ...t, updatedAt: new Date().toISOString() };
     // Write to localStorage synchronously FIRST so any immediate doSync()
     // call (e.g. from handleSync) reads the correct updated value.
-    const persisted = upsertTournament(updated, loadTournaments());
+    const all = loadTournaments();
+    const idx = all.findIndex(x => x.id === updated.id);
+    const persisted = idx >= 0 ? all.map(x => x.id === updated.id ? updated : x) : [...all, updated];
+    saveTournaments(persisted);
     setTournament(updated);
     setTournaments(persisted);
-    scheduleSyncDebounce(); // auto-push after 2.5s idle
+    scheduleSyncDebounce();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const doSync = async (showToast = false) => {
     if (!navigator.onLine) { setSyncStatus('offline'); return; }
+    if (syncInProgress.current) return; // prevent concurrent syncs
+    syncInProgress.current = true;
     setSyncStatus('syncing');
     try {
       const local = loadTournaments();
@@ -327,56 +374,52 @@ export default function TeamsPage() {
       const sharedLocal = local.filter(t =>  t.sharedFrom);
 
       // ── Pull + push owned tournaments (requires session) ──────────────────
-      // Skip entirely if there are no owned tournaments (pure collaborator)
       let ownedMerged: Tournament[] = ownedLocal;
-      if (ownedLocal.length > 0) {
-        const pullRes = await fetch("/api/tournaments");
-        if (pullRes.status === 401) { setSyncStatus('unauthed'); }
-        else if (pullRes.ok) {
-          const { tournaments: remote } = await pullRes.json() as { tournaments: Tournament[] };
-          const deletedIds = getDeletedTournamentIds();
-          const remoteFiltered = remote.filter((t: Tournament) => !deletedIds.has(t.id));
-          const remoteMap = new Map(remoteFiltered.map((t: Tournament) => [t.id, t]));
-          const localMap  = new Map(ownedLocal.map(t => [t.id, t]));
-          const allIds = new Set([...localMap.keys(), ...remoteMap.keys()]);
-          ownedMerged = [];
-          allIds.forEach(id => {
-            const l = localMap.get(id);
-            const r = remoteMap.get(id);
-            if (!l) { ownedMerged.push(r!); return; }
-            if (!r) { ownedMerged.push(l);  return; }
-            const localNewer = (l.updatedAt ?? "") >= (r.updatedAt ?? "");
-            const base = localNewer ? l : r;
-            const other = localNewer ? r : l;
-            ownedMerged.push({
-              ...base,
-              teams: mergeTeams(base.teams ?? [], other.teams ?? [], localNewer),
-              // For every admin-set field: local value wins over remote.
-              // Remote only fills in if local is completely absent (undefined).
-              // This ensures any intentional change on this device survives sync
-              // regardless of timestamp comparison edge-cases.
-              isActive:    l.isActive    ?? r.isActive,
-              entryFee:    l.entryFee    ?? r.entryFee,
-              rules:       l.rules       ?? r.rules,
-              roomInfo:    l.roomInfo    ?? r.roomInfo,
-              waGroup:     l.waGroup     ?? r.waGroup,
-              waMessage:   l.waMessage   ?? r.waMessage,
-              waGroupSent: l.waGroupSent ?? r.waGroupSent,
-              pointSystem: l.pointSystem ?? r.pointSystem,
-              geminiData:  l.geminiData  ?? r.geminiData,
-              assignments: l.assignments ?? r.assignments,
-            });
-          });
-          // Filter out deleted tournaments before pushing
-          const pushPayload = ownedMerged.filter(t => !deletedIds.has(t.id));
-          if (pushPayload.length > 0) {
-            const pushRes = await fetch("/api/tournaments", {
-              method: "PUT", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ tournaments: pushPayload }),
-            });
-            if (pushRes.status === 401) setSyncStatus('unauthed');
-            else if (!pushRes.ok) throw new Error("Sync failed");
+      const pullRes = await authFetch("/api/tournaments");
+      if (pullRes.status === 401) {
+        setSyncStatus('unauthed');
+        // Still save local data but don't push
+        if (showToast) toast.error("Not logged in — changes saved locally only");
+        return;
+      }
+      if (pullRes.ok) {
+        const { tournaments: remote } = await pullRes.json() as { tournaments: Tournament[] };
+        const deletedIds = getDeletedTournamentIds();
+        const remoteFiltered = remote.filter((t: Tournament) => !deletedIds.has(t.id));
+        const remoteMap = new Map(remoteFiltered.map((t: Tournament) => [t.id, t]));
+        const localMap  = new Map(ownedLocal.map(t => [t.id, t]));
+        // Build set of ALL remote IDs (before deletedIds filtering) to detect server-side deletes
+        const allRemoteIds = new Set(remote.map((t: Tournament) => t.id));
+        const allIds = new Set([...localMap.keys(), ...remoteMap.keys()]);
+        ownedMerged = [];
+        allIds.forEach(id => {
+          const l = localMap.get(id);
+          const r = remoteMap.get(id);
+          if (!l) { ownedMerged.push(r!); return; }
+          if (!r) {
+            // Local-only: keep only if never synced before (brand new tournament).
+            if (!allRemoteIds.has(id) && !deletedIds.has(id)) {
+              ownedMerged.push(l);
+            }
+            return;
           }
+          const localNewer = (l.updatedAt ?? "") >= (r.updatedAt ?? "");
+          const base = localNewer ? l : r;
+          const other = localNewer ? r : l;
+          ownedMerged.push({
+            ...base,
+            teams: mergeTeams(base.teams ?? [], other.teams ?? [], localNewer),
+          });
+        });
+        // Always push merged data to server
+        const pushPayload = ownedMerged.filter(t => !deletedIds.has(t.id));
+        if (pushPayload.length > 0) {
+          const pushRes = await authFetch("/api/tournaments", {
+            method: "PUT", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tournaments: pushPayload }),
+          });
+          if (pushRes.status === 401) { setSyncStatus('unauthed'); return; }
+          if (!pushRes.ok) throw new Error("Sync push failed");
         }
       }
 
@@ -447,9 +490,6 @@ export default function TeamsPage() {
         ultimateMerged.push({
           ...base,
           teams: mergeTeams(base.teams ?? [], other.teams ?? [], freshNewer),
-          // Preserve intentional isActive/entryFee changes made mid-sync
-          isActive:  f.isActive  ?? s.isActive,
-          entryFee:  f.entryFee  ?? s.entryFee ?? 0,
         });
       });
       saveTournaments(ultimateMerged);
@@ -461,7 +501,9 @@ export default function TeamsPage() {
         return ultimateMerged.find(t => t.id === prev.id) ?? prev;
       });
 
-      if (syncStatus !== 'unauthed') setSyncStatus('synced');
+      setPastTeams(syncPastTeamsFromTournaments(ultimateMerged));
+
+      setSyncStatus('synced');
       if (showToast) toast.success(`Synced ☁️`);
     } catch {
       if (!navigator.onLine) {
@@ -471,16 +513,40 @@ export default function TeamsPage() {
         // Online but sync failed (server error / timeout) — auto-retry after 5s
         setSyncStatus('idle');
         if (showToast) toast.error("Sync failed — retrying…");
-        setTimeout(() => doSync(false), 5000);
+        if (syncTimer.current) clearTimeout(syncTimer.current);
+        syncTimer.current = setTimeout(() => doSync(false), 5000);
       }
+    } finally {
+      syncInProgress.current = false;
     }
   };
 
   const scheduleSyncDebounce = () => {
     setSyncStatus('pending');
     if (syncTimer.current) clearTimeout(syncTimer.current);
-    syncTimer.current = setTimeout(() => doSync(false), 2500);
+    syncTimer.current = setTimeout(() => doSync(false), 1000);
   };
+
+  // Force sync on page close so unsaved changes push to server
+  useEffect(() => {
+    const onBeforeUnload = () => {
+      if (syncTimer.current) {
+        clearTimeout(syncTimer.current);
+        syncTimer.current = null;
+        // Use sendBeacon for reliable background push
+        const local = loadTournaments().filter(t => !t.sharedFrom);
+        if (local.length > 0) {
+          navigator.sendBeacon(
+            "/api/tournaments",
+            new Blob([JSON.stringify({ tournaments: local })], { type: "application/json" })
+          );
+        }
+      }
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleSync = () => {
     if (syncTimer.current) { clearTimeout(syncTimer.current); syncTimer.current = null; }
@@ -542,6 +608,7 @@ export default function TeamsPage() {
     const t = createTournament(createName.trim());
     setTournaments((prev) => { const u = [...prev, t]; saveTournaments(u); return u; });
     setTournament(t);
+    scheduleSyncDebounce();
     setCreateName(""); setRoundRobin(false); setShowCreate(false);
     setAddForm({ name: "", tags: "", phone: "" });
     setAddScreenTab("add"); setAddScreenMode("create"); setShowAddScreen(true);
@@ -799,9 +866,10 @@ export default function TeamsPage() {
     toast.success("Deleted");
     // Delete from server — await so sync doesn't race and re-create it
     try {
-      const res = await fetch(`/api/tournaments/${id}`, { method: "DELETE" });
+      const res = await authFetch(`/api/tournaments/${id}`, { method: "DELETE" });
       if (!res.ok) toast.error("Server delete failed");
     } catch { /* offline — deleted ID is tracked so sync won't re-add */ }
+    scheduleSyncDebounce();
   };
 
   const handleShare = async (t: Tournament) => {
@@ -814,7 +882,7 @@ export default function TeamsPage() {
     }
     // First time — fetch/generate tokens from server
     try {
-      const res = await fetch(`/api/tournaments/${t.id}/share`, {
+      const res = await authFetch(`/api/tournaments/${t.id}/share`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ data: t }),
@@ -863,6 +931,7 @@ export default function TeamsPage() {
       const updated = [cloned, ...existing];
       saveTournaments(updated);
       setTournaments(updated);
+      scheduleSyncDebounce();
       setImportCode(""); setShowImportCode(false);
       toast.success(`"${t.name}" imported! Changes will sync back to the owner.`);
     } catch { toast.error("Import failed"); }
@@ -1038,14 +1107,16 @@ export default function TeamsPage() {
   const captureRef = useCallback(async (ref: React.RefObject<HTMLDivElement | null>, download = false, filename = "image") => {
     const el = ref.current; if (!el) return; setIsCapturing(true);
     try {
-      const clone = el.cloneNode(true) as HTMLElement;
-      clone.style.width = "700px"; clone.style.height = "auto"; clone.style.overflow = "visible";
-      clone.querySelectorAll(".floating-controls").forEach((e) => e.remove());
-      const temp = document.createElement("div"); temp.style.cssText = "position:absolute;left:-9999px;top:0;"; temp.appendChild(clone); document.body.appendChild(temp);
-      await new Promise((r) => setTimeout(r, 300));
-      const h = clone.scrollHeight || clone.offsetHeight;
-      const dataUrl = await toJpeg(clone, { width: 700, height: h, pixelRatio: 3, quality: 0.92, skipFonts: true });
-      document.body.removeChild(temp);
+      // True WYSIWYG: html2canvas renders the element exactly as it appears
+      const canvas = await html2canvas(el, {
+        useCORS: true,
+        allowTaint: true,
+        scale: window.devicePixelRatio || 2,
+        backgroundColor: null,
+        logging: false,
+        imageTimeout: 5000,
+      });
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.95);
       if (download) { const a = document.createElement("a"); a.download = `${filename}.jpg`; a.href = dataUrl; a.click(); toast.success("Downloaded!"); return; }
       const res = await fetch(dataUrl); const blob = await res.blob();
       const file = new File([blob], `${filename}.jpg`, { type: "image/jpeg" });
@@ -1350,6 +1421,7 @@ export default function TeamsPage() {
             };
             setTournaments((prev) => { const u = [...prev, final]; saveTournaments(u); return u; });
             setTournament(final);
+            scheduleSyncDebounce();
             setPendingCloneDraft(null);
             setExcludedCloneTeams(new Set());
             setShowAddScreen(false);
@@ -1370,6 +1442,33 @@ export default function TeamsPage() {
               players: (team.players ?? []).join(", "),
               phone: team.phone ?? "",
             });
+          }}
+          pastTeams={pastTeams}
+          onAddPastTeam={(pt) => {
+            const t = pendingCloneDraft ?? tournament!;
+            const newTeam: Team = {
+              id: crypto.randomUUID(),
+              name: pt.name,
+              phone: pt.phone,
+              players: pt.players,
+              out: false,
+            };
+            const updated = { ...t, teams: [...t.teams, newTeam] };
+            if (pendingCloneDraft) {
+              setPendingCloneDraft(updated);
+            } else {
+              save(updated);
+            }
+          }}
+          onDeletePastTeam={(pt) => {
+            const updated = pastTeams.filter(p => p.name.toLowerCase().trim() !== pt.name.toLowerCase().trim());
+            setPastTeams(updated);
+            import("@/lib/storage").then(({ savePastTeams }) => savePastTeams(updated));
+          }}
+          onUpdatePastTeam={(pt) => {
+            const updated = pastTeams.map(p => p.name.toLowerCase().trim() === pt.name.toLowerCase().trim() ? pt : p);
+            setPastTeams(updated);
+            import("@/lib/storage").then(({ savePastTeams }) => savePastTeams(updated));
           }}
         />
       )}
@@ -1625,38 +1724,145 @@ export default function TeamsPage() {
       )}
 
       {/* SLOTS MODAL */}
-      {showSlots && tournament && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="floating-controls absolute top-4 right-4 z-30 flex gap-2">
-            <div className="flex items-center gap-1.5 px-3 py-2 bg-black/60 backdrop-blur-md border border-white/20 rounded-xl"><span className="text-[11px] text-white/60">Start</span><input type="number" value={startSlot} onChange={(e) => setStartSlot(Math.max(1, parseInt(e.target.value) || 1))} className="w-10 bg-transparent text-sm text-white text-center focus:outline-none" min={1} /></div>
-            <button onClick={() => captureRef(slotsRef, false, tournament.name || "slots")} disabled={isCapturing} className="text-white hover:text-orange-400 bg-black/60 backdrop-blur-md border border-white/20 p-2.5 rounded-xl transition-all disabled:opacity-50"><Share2 className="h-5 w-5" /></button>
-            <button onClick={() => captureRef(slotsRef, true, tournament.name || "slots")} disabled={isCapturing} className="text-white hover:text-blue-400 bg-black/60 backdrop-blur-md border border-white/20 p-2.5 rounded-xl transition-all disabled:opacity-50"><Download className="h-5 w-5" /></button>
-            <button onClick={() => setShowSlots(false)} className="text-white hover:text-red-400 bg-black/60 backdrop-blur-md border border-white/20 p-2.5 rounded-xl transition-all"><X className="h-5 w-5" /></button>
-          </div>
-          <div ref={slotsRef} className="relative w-full min-h-dvh flex items-center justify-center bg-cover bg-center py-14" style={{ backgroundImage: "url(/images/image.webp)" }}>
-            <div className="absolute inset-0" style={{ background: "linear-gradient(to bottom,rgba(0,0,0,0.5),rgba(0,0,0,0.4),rgba(0,0,0,0.5))" }} />
-            <div className="relative z-10 w-full max-w-lg mx-auto px-4">
-              <div className="text-center mb-6">
-                <h1 className="text-2xl sm:text-4xl font-bold tracking-wide text-orange-500" style={{ textShadow: "0 0 30px rgba(249,115,22,0.6)" }}>{tournament.name}</h1>
-                <p className="text-xs text-white/40 mt-2">Slot Assignments</p>
+      {showSlots && tournament && (() => {
+        // DEV: Pad slots with dummy teams for testing (UI only, remove later)
+        const paddedSlots = [...slotAssignments];
+        const SLOT_DUMMY_TARGET = 25;
+        const slotDummyNames = ["Alpha","Bravo","Charlie","Delta","Echo","Foxtrot","Golf","Hotel","India","Juliet","Kilo","Lima","Mike","Nova","Oscar","Papa","Quebec","Romeo","Sierra","Tango","Uniform","Victor","Whiskey","Xray","Yankee"];
+        if (paddedSlots.length < SLOT_DUMMY_TARGET) {
+          for (let i = paddedSlots.length; i < SLOT_DUMMY_TARGET; i++) {
+            paddedSlots.push({ id: `dummy-slot-${i}`, name: slotDummyNames[i] || `Team ${i+1}`, slot: startSlot + i, players: [], out: false } as typeof paddedSlots[0]);
+          }
+        }
+
+        const renderSlotCard = (t: typeof standingsThemes[0], cardIdx: number) => {
+          const total = paddedSlots.length;
+          const perCol = Math.ceil(total / 2);
+          const cols = [paddedSlots.slice(0, perCol), paddedSlots.slice(perCol)].filter(c => c.length > 0);
+
+          // Dynamic sizing
+          const rowPad = perCol > 12 ? "1px 2px" : perCol > 9 ? "1px 3px" : perCol > 7 ? "2px 3px" : "3px 4px";
+          const fs = perCol > 12 ? "7px" : perCol > 9 ? "7.5px" : perCol > 7 ? "8px" : "9px";
+          const rankSize = perCol > 12 ? "11px" : perCol > 9 ? "12px" : perCol > 7 ? "14px" : "16px";
+          const rankFs = perCol > 12 ? "6px" : perCol > 9 ? "6.5px" : perCol > 7 ? "7px" : "8px";
+          const headerPad = perCol > 12 ? "1px 2px" : perCol > 9 ? "2px 3px" : "3px 4px";
+          const headerFs = perCol > 12 ? "5px" : perCol > 9 ? "5.5px" : "6px";
+
+          return (
+            <div
+              key={t.id}
+              ref={cardIdx === slotThemeIdx ? slotsRef : undefined}
+              className="shrink-0 relative overflow-hidden"
+              style={{
+                width: "calc(100vw - 48px)",
+                aspectRatio: "1/1",
+                scrollSnapAlign: "center",
+                borderRadius: "20px",
+                background: t.bg,
+                ...(t.bgImage ? { backgroundImage: `url(${t.bgImage})`, backgroundSize: "cover", backgroundPosition: "center" } : {}),
+              }}
+            >
+              {t.overlay !== "none" && <div className="absolute inset-0" style={{ background: t.overlay, borderRadius: "20px" }} />}
+              <div className="relative z-10 px-3 py-3 h-full flex flex-col">
+                <div className="text-center mb-2">
+                  <h2 className="text-base font-bold tracking-wide" style={{ color: t.titleColor, textShadow: t.titleShadow }}>{tournament.name}</h2>
+                  <div className="mt-1 inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full" style={{ background: t.badgeBg, border: `1px solid ${t.badgeBorder}` }}>
+                    <span className="text-[9px] font-semibold" style={{ color: t.badgeText }}>📋 Slot Assignments</span>
+                  </div>
+                </div>
+                <div className="flex-1" style={{ display: "flex", gap: "6px" }}>
+                  {cols.map((col, ci) => (
+                    <div key={ci} className="flex-1 overflow-hidden flex flex-col" style={{ borderRadius: "8px", backgroundColor: t.tableBg, border: `1px solid ${t.tableBorder}` }}>
+                      <div style={{ backgroundColor: t.headerBg, borderBottom: `1px solid ${t.headerBorder}`, padding: headerPad, display: "flex", alignItems: "center" }}>
+                        <span style={{ width: "20px", fontSize: headerFs, fontWeight: 800, textTransform: "uppercase", textAlign: "center", color: t.headerText }}>Slot</span>
+                        <span style={{ flex: 1, fontSize: headerFs, fontWeight: 800, textTransform: "uppercase", color: t.headerText }}>Team</span>
+                      </div>
+                      {col.map((s, idx) => (
+                        <div key={s.id} className="flex items-center flex-1" style={{ padding: "0 3px", borderBottom: `1px solid ${t.rowBorder}`, background: idx % 2 === 0 ? t.rowEven : t.rowOdd }}>
+                          <span className="inline-flex items-center justify-center rounded font-black" style={{
+                            width: rankSize, height: rankSize, fontSize: rankFs, flexShrink: 0, marginRight: "3px",
+                            background: t.rankDefault,
+                            color: t.rankDefaultText,
+                          }}>{s.slot}</span>
+                          <span style={{ flex: 1, color: t.cellText, fontSize: fs, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden" }}>{s.name.slice(0, 7)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-2 flex items-center justify-center gap-2 text-[9px]"><div className="h-px w-6" style={{ background: `linear-gradient(to right,transparent,${t.footerAccent})` }} /><span className="font-medium" style={{ color: t.footerText }}>{APP_NAME}</span><div className="h-px w-6" style={{ background: `linear-gradient(to left,transparent,${t.footerAccent})` }} /></div>
               </div>
-              <div className="rounded-2xl border border-white/[0.15] shadow-2xl overflow-hidden" style={{ backgroundColor: "rgba(0,0,0,0.4)" }}>
-                <table className="w-full">
-                  <thead><tr className="bg-white/[0.06] border-b border-white/10"><th className="px-4 py-2.5 text-center text-sm font-semibold text-white w-16">Slot</th><th className="px-4 py-2.5 text-center text-sm font-semibold text-white">Team</th></tr></thead>
-                  <tbody>
-                    {slotAssignments.map((s, i) => {
-                      const c = i % 3; const tc = c === 0 ? "text-white" : c === 1 ? "text-sky-100" : "text-amber-100"; const bg = c === 0 ? "bg-white/[0.08]" : c === 1 ? "bg-sky-400/[0.10]" : "bg-amber-400/[0.10]";
-                      return <tr key={s.id} className={`border-b border-white/5 last:border-b-0 ${bg}`}><td className={`px-4 py-2 text-center text-sm font-bold ${tc}`}>{s.slot}</td><td className={`px-4 py-2 text-center text-sm font-bold ${tc}`}>{s.name}</td></tr>;
-                    })}
-                  </tbody>
-                </table>
-                <div className="px-4 py-2 bg-white/[0.04] border-t border-white/10 text-center"><span className="text-xs font-semibold text-white/60">Total Teams: {slotAssignments.length}</span></div>
+            </div>
+          );
+        };
+
+        return (
+          <div className="fixed inset-0 z-50 flex flex-col" style={{ background: "#0a0a0a" }}>
+            {/* Top bar */}
+            <div className="shrink-0 flex items-center justify-between px-4 pt-4 pb-2">
+              <button onClick={() => setShowSlots(false)} className="text-white/70 hover:text-white bg-white/5 border border-white/10 p-2 rounded-xl transition-all"><X className="h-5 w-5" /></button>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold tracking-widest text-white/30">SLOTS</span>
+                <div className="flex items-center gap-1 px-2 py-1 bg-white/5 border border-white/10 rounded-lg"><span className="text-[10px] text-white/50">Start</span><input type="number" value={startSlot} onChange={(e) => setStartSlot(Math.max(1, parseInt(e.target.value) || 1))} className="w-8 bg-transparent text-xs text-white text-center focus:outline-none" min={1} /></div>
               </div>
-              <div className="mt-6 flex items-center justify-center gap-2 text-white/40 text-[10px]"><div className="h-px w-8 bg-gradient-to-r from-transparent to-violet-500/50" /><span className="font-medium text-white/50">{APP_NAME}</span><div className="h-px w-8 bg-gradient-to-l from-transparent to-violet-500/50" /></div>
+              <div className="flex gap-2">
+                <button onClick={() => captureRef(slotsRef, false, tournament.name || "slots")} disabled={isCapturing} className="text-white/70 hover:text-orange-400 bg-white/5 border border-white/10 p-2 rounded-xl transition-all disabled:opacity-50"><Share2 className="h-5 w-5" /></button>
+                <button onClick={() => captureRef(slotsRef, true, tournament.name || "slots")} disabled={isCapturing} className="text-white/70 hover:text-blue-400 bg-white/5 border border-white/10 p-2 rounded-xl transition-all disabled:opacity-50"><Download className="h-5 w-5" /></button>
+              </div>
+            </div>
+
+            {/* Card carousel + dots together */}
+            <div className="flex-1 flex flex-col justify-center overflow-hidden relative">
+              {slotThemeIdx > 0 && <button onClick={() => { const el = slotThemeScrollRef.current; if (el) { const cw = el.firstElementChild?.clientWidth ?? 300; el.scrollBy({ left: -(cw + 16), behavior: "smooth" }); }}} className="absolute left-1 z-20 p-1.5 rounded-full bg-black/50 backdrop-blur-md border border-white/20 text-white/80 hover:text-white hover:bg-black/70 transition-all" style={{ top: "45%", transform: "translateY(-50%)" }}><ChevronLeft className="h-5 w-5" /></button>}
+              {slotThemeIdx < standingsThemes.length - 1 && <button onClick={() => { const el = slotThemeScrollRef.current; if (el) { const cw = el.firstElementChild?.clientWidth ?? 300; el.scrollBy({ left: cw + 16, behavior: "smooth" }); }}} className="absolute right-1 z-20 p-1.5 rounded-full bg-black/50 backdrop-blur-md border border-white/20 text-white/80 hover:text-white hover:bg-black/70 transition-all" style={{ top: "45%", transform: "translateY(-50%)" }}><ChevronRight className="h-5 w-5" /></button>}
+              <div className="overflow-hidden">
+              <div
+                ref={slotThemeScrollRef}
+                className="flex gap-4 overflow-x-auto px-6 py-2 no-scrollbar w-full items-center"
+                style={{ scrollSnapType: "x mandatory", WebkitOverflowScrolling: "touch", paddingBottom: "20px", marginBottom: "-20px" }}
+                onScroll={(e) => {
+                  const el = e.currentTarget;
+                  const cardW = el.firstElementChild?.clientWidth ?? 300;
+                  const gap = 16;
+                  const idx = Math.round(el.scrollLeft / (cardW + gap));
+                  const clamped = Math.max(0, Math.min(idx, standingsThemes.length - 1));
+                  setSlotThemeIdx(clamped);
+                }}
+              >
+                {standingsThemes.map((t, i) => renderSlotCard(t, i))}
+              </div>
+              </div>
+              {/* Theme name + dots */}
+              <div className="pt-2 pb-2 px-4">
+                <p className="text-center text-sm font-bold text-white mb-1.5">{standingsThemes[slotThemeIdx].name}</p>
+                <div className="flex justify-center gap-1.5 flex-wrap">
+                  {standingsThemes.map((t, i) => (
+                    <button
+                      key={t.id}
+                      onClick={() => {
+                        setSlotThemeIdx(i);
+                        const el = slotThemeScrollRef.current;
+                        if (el) {
+                          const cardW = el.firstElementChild?.clientWidth ?? 300;
+                          el.scrollTo({ left: i * (cardW + 16), behavior: "smooth" });
+                        }
+                      }}
+                      className="transition-all duration-300"
+                      style={{
+                        width: slotThemeIdx === i ? "20px" : "6px",
+                        height: "6px",
+                        borderRadius: "3px",
+                        background: slotThemeIdx === i ? t.previewColors[1] : "rgba(255,255,255,0.2)",
+                        boxShadow: slotThemeIdx === i ? `0 0 8px ${t.previewColors[1]}60` : "none",
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* STANDINGS MODAL */}
       {showStandings && tournament && (() => {
@@ -1664,80 +1870,292 @@ export default function TeamsPage() {
         const killMap = new Map<string, number>();
         tournament.geminiData?.groups.forEach((group) => group.matches.forEach((match) => Object.entries(match.playerKills).forEach(([p, k]) => killMap.set(p, (killMap.get(p) || 0) + k))));
         const topFraggers = [...killMap.entries()].map(([name, kills]) => ({ name, kills })).sort((a, b) => b.kills - a.kills).slice(0, 20);
-        const medalStyle = (rank: number) => rank === 1 ? { bg: "linear-gradient(135deg,#facc15,#f59e0b)", color: "#000" } : rank === 2 ? { bg: "linear-gradient(135deg,#e2e8f0,#94a3b8)", color: "#000" } : rank === 3 ? { bg: "linear-gradient(135deg,#f97316,#b45309)", color: "#fff" } : { bg: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.7)" };
+
+        // DEV: Pad with dummy teams for preview testing (UI only, remove later)
+        const DUMMY_TARGET = 25;
+        const dummyNames = ["Alpha","Bravo","Charlie","Delta","Echo","Foxtrot","Golf","Hotel","India","Juliet","Kilo","Lima","Mike","Nova","Oscar","Papa","Quebec","Romeo","Sierra","Tango","Uniform","Victor","Whiskey","Xray","Yankee"];
+        const paddedStandings = [...standings];
+        if (paddedStandings.length < DUMMY_TARGET) {
+          const lastPts = paddedStandings[paddedStandings.length - 1]?.totalPoints ?? 10;
+          for (let i = paddedStandings.length; i < DUMMY_TARGET; i++) {
+            paddedStandings.push({ teamId: `dummy-${i}`, teamName: dummyNames[i] || `Team ${i+1}`, group: "A", players: [], chickenDinners: Math.random() > 0.7 ? 1 : 0, matchCount: 4, placementPoints: Math.max(1, lastPts - (i - standings.length) * 2), totalKills: Math.floor(Math.random() * 15), totalPoints: Math.max(1, lastPts - (i - standings.length) * 2), lastMatchPosition: i + 1, positions: [] });
+          }
+        }
+        // Use paddedStandings in renderCard instead of standings for testing
+
+        const renderCard = (t: typeof standingsThemes[0], cardIdx: number) => {
+          const medalStyle = (rank: number) => rank === 1 ? { bg: t.rank1, color: "#000" } : rank === 2 ? { bg: t.rank2, color: "#000" } : rank === 3 ? { bg: t.rank3, color: "#fff" } : { bg: t.rankDefault, color: t.rankDefaultText };
+          const getRankBg = (rank: number) => rank === 1 ? t.rank1 : rank === 2 ? t.rank2 : rank === 3 ? t.rank3 : t.rankDefault;
+          const getRankText = (rank: number) => rank === 1 ? "#000" : rank === 2 ? "#000" : rank === 3 ? "#fff" : t.rankDefaultText;
+          const badgeLabel = standingsTab === "table" ? "🏆 Overall Rankings" : standingsTab === "warhead" ? "💀 Team Kills" : "🔫 Top Fraggers";
+
+          const renderTitle = () => {
+            switch (t.layout) {
+              case "banner":
+                return (
+                  <div className="mb-2">
+                    <div style={{ borderLeft: `4px solid ${t.accentColor}`, paddingLeft: "12px" }}>
+                      <h2 className="text-lg font-black tracking-wider uppercase" style={{ color: t.titleColor, textShadow: t.titleShadow }}>{tournament.name}</h2>
+                      <span className="text-[9px] font-bold uppercase tracking-widest" style={{ color: t.accentColor }}>{badgeLabel}</span>
+                    </div>
+                  </div>
+                );
+              case "bold":
+                return (
+                  <div className="text-center mb-2">
+                    <h2 className="text-xl font-black tracking-widest uppercase" style={{ color: t.titleColor, textShadow: t.titleShadow, letterSpacing: "0.15em" }}>{tournament.name}</h2>
+                    <div className="mt-1 flex items-center justify-center gap-3">
+                      <div className="h-0.5 w-8" style={{ background: t.accentColor }} />
+                      <span className="text-[9px] font-black uppercase tracking-widest" style={{ color: t.accentColor }}>{badgeLabel}</span>
+                      <div className="h-0.5 w-8" style={{ background: t.accentColor }} />
+                    </div>
+                  </div>
+                );
+              case "minimal":
+                return (
+                  <div className="mb-2">
+                    <h2 className="text-sm font-bold tracking-wider uppercase" style={{ color: t.titleColor, opacity: 0.7 }}>{tournament.name}</h2>
+                    <span className="text-[8px] font-medium uppercase tracking-widest" style={{ color: t.legendText }}>{badgeLabel}</span>
+                  </div>
+                );
+              case "accent-bar":
+                return (
+                  <div className="text-center mb-2">
+                    <div className="inline-block px-4 py-1.5 rounded-lg mb-1" style={{ background: t.accentColor }}>
+                      <h2 className="text-sm font-black tracking-wide" style={{ color: "#000", textShadow: "none" }}>{tournament.name}</h2>
+                    </div>
+                    <div><span className="text-[9px] font-semibold" style={{ color: t.badgeText }}>{badgeLabel}</span></div>
+                  </div>
+                );
+              case "compact":
+                return (
+                  <div className="flex items-center justify-between mb-2">
+                    <div>
+                      <h2 className="text-sm font-bold" style={{ color: t.titleColor, textShadow: t.titleShadow }}>{tournament.name}</h2>
+                      <span className="text-[7px] font-semibold uppercase tracking-wider" style={{ color: t.legendText }}>{badgeLabel}</span>
+                    </div>
+                    <div className="px-2 py-1 rounded-md" style={{ background: t.badgeBg, border: `1px solid ${t.badgeBorder}` }}>
+                      <span className="text-[10px] font-black" style={{ color: t.accentColor }}>{standings.length}</span>
+                    </div>
+                  </div>
+                );
+              case "split":
+                return (
+                  <div className="text-center mb-2">
+                    <h2 className="text-base font-bold italic tracking-wide" style={{ color: t.titleColor, textShadow: t.titleShadow }}>{tournament.name}</h2>
+                    <div className="mt-1 inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full" style={{ background: t.badgeBg, border: `1px solid ${t.badgeBorder}` }}>
+                      <span className="text-[9px] font-semibold" style={{ color: t.badgeText }}>{badgeLabel}</span>
+                    </div>
+                  </div>
+                );
+              default: // "default"
+                return (
+                  <div className="text-center mb-2">
+                    <h2 className="text-base font-bold tracking-wide" style={{ color: t.titleColor, textShadow: t.titleShadow }}>{tournament.name}</h2>
+                    <div className="mt-1 inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full" style={{ background: t.badgeBg, border: `1px solid ${t.badgeBorder}` }}>
+                      <span className="text-[9px] font-semibold" style={{ color: t.badgeText }}>{badgeLabel}</span>
+                    </div>
+                  </div>
+                );
+            }
+          };
+
+          /* ─── Table always multi-col, dynamic sizing ─── */
+          const renderStandingsTable = () => {
+            if (paddedStandings.length === 0) return (
+              <div className="flex flex-col items-center justify-center py-12 gap-2">
+                <span style={{ fontSize: "36px" }}>📊</span>
+                <p style={{ color: t.cellText, fontWeight: 700, fontSize: "14px" }}>No standings yet</p>
+              </div>
+            );
+
+            const total = paddedStandings.length;
+            const numCols = 2;
+            const perCol = Math.ceil(total / numCols);
+            const cols: typeof paddedStandings[] = [];
+            for (let c = 0; c < numCols; c++) {
+              const slice = paddedStandings.slice(c * perCol, (c + 1) * perCol);
+              if (slice.length > 0) cols.push(slice);
+            }
+
+            const isBold = t.layout === "bold";
+            const isMinimal = t.layout === "minimal";
+            const isAccentBar = t.layout === "accent-bar";
+
+            // Dynamic sizing based on max rows per column
+            const rowPad = perCol > 12 ? "1px 2px" : perCol > 9 ? "1px 3px" : perCol > 7 ? "2px 3px" : "3px 4px";
+            const fs = perCol > 12 ? "7px" : perCol > 9 ? "7.5px" : perCol > 7 ? "8px" : "9px";
+            const scoreFs = perCol > 12 ? "7.5px" : perCol > 9 ? "8px" : perCol > 7 ? "9px" : "10px";
+            const rankSize = perCol > 12 ? "11px" : perCol > 9 ? "12px" : perCol > 7 ? "14px" : isBold ? "22px" : "16px";
+            const rankFs = perCol > 12 ? "6px" : perCol > 9 ? "6.5px" : perCol > 7 ? "7px" : isBold ? "10px" : "8px";
+            const headerPad = perCol > 12 ? "1px 2px" : perCol > 9 ? "2px 3px" : "3px 4px";
+            const headerFs = perCol > 12 ? "5px" : perCol > 9 ? "5.5px" : "6px";
+
+            return (
+              <div style={{ display: "flex", gap: "6px" }}>
+                {cols.map((col, ci) => (
+                  <div
+                    key={ci}
+                    className="flex-1 overflow-hidden"
+                    style={{
+                      borderRadius: isBold ? "12px" : "8px",
+                      backgroundColor: isMinimal ? "transparent" : t.tableBg,
+                      border: isMinimal ? "none" : isBold ? `2px solid ${t.accentColor}` : `1px solid ${t.tableBorder}`,
+                    }}
+                  >
+                    <div style={{ backgroundColor: isMinimal ? "transparent" : t.headerBg, borderBottom: isBold ? `2px solid ${t.accentColor}` : `1px solid ${isMinimal ? t.rowBorder + "40" : t.headerBorder}`, padding: headerPad, display: "flex", alignItems: "center" }}>
+                        <span style={{ width: "18px", fontSize: headerFs, fontWeight: 800, textTransform: "uppercase", textAlign: "center", color: isMinimal ? t.legendText : t.headerText }}>#</span>
+                        <span style={{ flex: 1, fontSize: headerFs, fontWeight: 800, textTransform: "uppercase", color: isMinimal ? t.legendText : t.headerText }}>Team</span>
+                        <span style={{ width: "14px", fontSize: headerFs, fontWeight: 800, textAlign: "center", color: isMinimal ? t.legendText : t.headerText }}>🍗</span>
+                        <span style={{ width: "16px", fontSize: headerFs, fontWeight: 800, textTransform: "uppercase", textAlign: "center", color: isMinimal ? t.legendText : t.headerText }}>MP</span>
+                        <span style={{ width: "16px", fontSize: headerFs, fontWeight: 800, textTransform: "uppercase", textAlign: "center", color: isMinimal ? t.legendText : t.headerText }}>K</span>
+                        <span style={{ width: "20px", fontSize: headerFs, fontWeight: 800, textTransform: "uppercase", textAlign: "right", color: t.accentColor }}>T</span>
+                      </div>
+                    {col.map((row, idx) => {
+                      const rank = ci * perCol + idx + 1;
+                      return (
+                        <div
+                          key={row.teamId}
+                          className="flex items-center"
+                          style={{
+                            padding: rowPad,
+                            borderBottom: isMinimal ? `1px solid ${t.rowBorder}20` : `1px solid ${t.rowBorder}`,
+                            background: isMinimal ? "transparent" : idx % 2 === 0 ? t.rowEven : t.rowOdd,
+                          }}
+                        >
+                          {isAccentBar && <div style={{ width: "2px", alignSelf: "stretch", background: rank <= 3 ? t.accentColor : "transparent", marginRight: "2px" }} />}
+                          {isMinimal ? (
+                            <span style={{ width: "16px", textAlign: "center", color: rank <= 3 ? t.accentColor : t.legendText, fontSize: fs, fontWeight: 900, fontFamily: "monospace" }}>{rank}</span>
+                          ) : (
+                            <span className="inline-flex items-center justify-center rounded font-black" style={{ width: rankSize, height: rankSize, fontSize: rankFs, background: getRankBg(rank), color: getRankText(rank), flexShrink: 0, marginRight: "3px" }}>{rank}</span>
+                          )}
+                          <span style={{ flex: 1, color: t.cellText, fontSize: fs, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden" }}>{row.teamName.slice(0, 7)}</span>
+                          <span style={{ width: "14px", textAlign: "center", fontSize: fs, fontWeight: 700, fontFamily: "monospace", color: row.chickenDinners > 0 ? "#facc15" : "rgba(255,255,255,0.2)" }}>{row.chickenDinners}</span>
+                          <span style={{ width: "16px", textAlign: "center", color: t.cellText, fontSize: fs, fontWeight: 600, fontFamily: "monospace", opacity: 0.7 }}>{row.matchCount}</span>
+                          <span style={{ width: "16px", textAlign: "center", color: t.cellText, fontSize: fs, fontWeight: 600, fontFamily: "monospace" }}>{row.totalKills}</span>
+                          <span style={{ color: t.accentColor, fontSize: scoreFs, fontWeight: 900, fontFamily: "monospace", width: "20px", textAlign: "right" }}>{row.totalPoints}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            );
+          };
+
+          /* ─── Layout-specific List (warhead/fraggers) ─── */
+          const renderList = (data: Array<{teamId?: string; teamName?: string; name?: string; totalKills?: number; kills?: number}>, type: "warhead" | "fraggers") => {
+            const icon = type === "warhead" ? "💀" : "🔫";
+            if (t.layout === "minimal") {
+              return <div>{data.map((item, idx) => { const m = medalStyle(idx + 1); const label = type === "warhead" ? item.teamName : item.name; const val = type === "warhead" ? item.totalKills : item.kills; return <div key={label} className="flex items-center" style={{ padding: "5px 8px", borderBottom: `1px solid ${t.rowBorder}20` }}><span style={{ width: "18px", textAlign: "center", color: idx < 3 ? t.accentColor : t.legendText, fontSize: "10px", fontWeight: 900, marginRight: "8px" }}>{idx + 1}</span><span style={{ flex: 1, color: t.cellText, fontSize: "11px", fontWeight: 600 }}>{label}</span><span style={{ color: idx === 0 ? t.accentColor : t.cellText, fontSize: "13px", fontWeight: 900, fontFamily: "monospace" }}>{val}</span></div>; })}</div>;
+            }
+            return (
+              <div className="overflow-hidden rounded-xl" style={{ backgroundColor: t.tableBg, border: `1px solid ${t.tableBorder}` }}>
+                <div style={{ background: `linear-gradient(90deg,${t.headerBg},transparent)`, padding: "7px 12px", borderBottom: `1px solid ${t.rowBorder}` }}><div style={{ display: "flex", justifyContent: "space-between", fontSize: "8px", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: t.headerText }}><span>Rank · {type === "warhead" ? "Team" : "Player"}</span><span>Kills</span></div></div>
+                {data.map((item, idx) => { const m = medalStyle(idx + 1); const label = type === "warhead" ? item.teamName : item.name; const val = type === "warhead" ? item.totalKills : item.kills; return <div key={label} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "7px 12px", borderBottom: `1px solid ${t.rowBorder}`, background: idx % 2 === 0 ? t.rowEven : t.rowOdd }}><span style={{ background: m.bg, color: m.color, borderRadius: "6px", width: "22px", height: "22px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "10px", fontWeight: 900, flexShrink: 0 }}>{idx + 1}</span><span style={{ flex: 1, color: t.cellText, fontSize: "12px", fontWeight: 700 }}>{label}</span><span style={{ color: idx === 0 ? t.accentColor : t.cellText, fontSize: "14px", fontWeight: 900, fontFamily: "monospace" }}>{val}</span><span style={{ color: t.legendText, fontSize: "9px" }}>{icon}</span></div>; })}
+              </div>
+            );
+          };
+
+          /* ─── Layout-specific Footer ─── */
+          const renderFooter = () => {
+            if (t.layout === "banner") return <div className="mt-1 text-right"><span className="text-[8px] font-bold tracking-widest" style={{ color: t.footerText, opacity: 0.5 }}>By {APP_NAME}</span></div>;
+            if (t.layout === "minimal") return <div className="mt-2 pt-1" style={{ borderTop: `1px solid ${t.rowBorder}20` }}><span className="text-[8px] font-medium" style={{ color: t.footerText, opacity: 0.4 }}>{APP_NAME}</span></div>;
+            return <div className="mt-2 flex items-center justify-center gap-2 text-[9px]"><div className="h-px w-6" style={{ background: `linear-gradient(to right,transparent,${t.footerAccent})` }} /><span className="font-medium" style={{ color: t.footerText }}>{APP_NAME}</span><div className="h-px w-6" style={{ background: `linear-gradient(to left,transparent,${t.footerAccent})` }} /></div>;
+          };
+
+          /* ─── Card wrapper (layout affects decorative elements) ─── */
+          const borderDecor = t.layout === "accent-bar" ? { borderLeft: `5px solid ${t.accentColor}` } : t.layout === "bold" ? { border: `3px solid ${t.accentColor}30` } : {};
+
+          return (
+            <div
+              key={t.id}
+              ref={cardIdx === themeIdx ? standingsRef : undefined}
+              className="shrink-0 relative overflow-hidden"
+              style={{
+                width: "calc(100vw - 48px)",
+                aspectRatio: "1/1",
+                scrollSnapAlign: "center",
+                borderRadius: t.layout === "bold" ? "24px" : "20px",
+                background: t.bg,
+                ...(t.bgImage ? { backgroundImage: `url(${t.bgImage})`, backgroundSize: "cover", backgroundPosition: "center" } : {}),
+                ...borderDecor,
+              }}
+            >
+              {t.overlay !== "none" && <div className="absolute inset-0" style={{ background: t.overlay, borderRadius: "20px" }} />}
+              <div className="relative z-10 px-3 py-3 h-full flex flex-col">
+                {renderTitle()}
+                <div className="flex-1">
+                  {standingsTab === "table" && renderStandingsTable()}
+                  {standingsTab === "warhead" && renderList(warheadData as Array<{teamId?: string; teamName?: string; totalKills?: number}>, "warhead")}
+                  {standingsTab === "fraggers" && renderList(topFraggers as Array<{name?: string; kills?: number}>, "fraggers")}
+                </div>
+                {standingsTab === "table" && t.layout !== "minimal" && t.layout !== "compact" && <div style={{ textAlign: "center", marginTop: "2px", fontSize: "6px", color: t.legendText }}>🍗 Dinners · M Matches · P Placement · E Eliminations · T Total</div>}
+                {renderFooter()}
+              </div>
+            </div>
+          );
+        };
+
         return (
-          <div className="fixed inset-0 z-[55] overflow-y-auto">
-            <div className="floating-controls absolute top-4 right-4 z-30 flex gap-2">
-              <button onClick={() => captureRef(standingsRef, false, `${tournament.name}-${standingsTab}`)} disabled={isCapturing} className="text-white hover:text-orange-400 bg-black/60 backdrop-blur-md border border-white/20 p-2.5 rounded-xl transition-all disabled:opacity-50"><Share2 className="h-5 w-5" /></button>
-              <button onClick={() => captureRef(standingsRef, true, `${tournament.name}-${standingsTab}`)} disabled={isCapturing} className="text-white hover:text-blue-400 bg-black/60 backdrop-blur-md border border-white/20 p-2.5 rounded-xl transition-all disabled:opacity-50"><Download className="h-5 w-5" /></button>
-              <button onClick={() => setShowStandings(false)} className="text-white hover:text-red-400 bg-black/60 backdrop-blur-md border border-white/20 p-2.5 rounded-xl transition-all"><X className="h-5 w-5" /></button>
+          <div className="fixed inset-0 z-[55] flex flex-col" style={{ background: "#0a0a0a" }}>
+            {/* Top bar */}
+            <div className="shrink-0 flex items-center justify-between px-4 pt-4 pb-2">
+              <button onClick={() => setShowStandings(false)} className="text-white/70 hover:text-white bg-white/5 border border-white/10 p-2 rounded-xl transition-all"><X className="h-5 w-5" /></button>
+              <p className="text-xs font-bold tracking-widest text-white/30">STANDINGS</p>
+              <div className="flex gap-2">
+                <button onClick={() => captureRef(standingsRef, false, `${tournament.name}-${standingsTab}`)} disabled={isCapturing} className="text-white/70 hover:text-orange-400 bg-white/5 border border-white/10 p-2 rounded-xl transition-all disabled:opacity-50"><Share2 className="h-5 w-5" /></button>
+                <button onClick={() => captureRef(standingsRef, true, `${tournament.name}-${standingsTab}`)} disabled={isCapturing} className="text-white/70 hover:text-blue-400 bg-white/5 border border-white/10 p-2 rounded-xl transition-all disabled:opacity-50"><Download className="h-5 w-5" /></button>
+              </div>
             </div>
 
-            <div ref={standingsRef} className="relative w-full min-h-dvh flex items-center justify-center bg-cover bg-center py-20" style={{ backgroundImage: "url(/images/image.webp)" }}>
-              <div className="absolute inset-0" style={{ background: "linear-gradient(to bottom,rgba(0,0,0,0.6),rgba(0,0,0,0.45),rgba(0,0,0,0.6))" }} />
-              <div className="relative z-10 w-full max-w-5xl mx-auto px-4 sm:px-6">
-                <div className="text-center mb-6">
-                  <h1 className="text-2xl sm:text-4xl font-bold tracking-wide text-orange-500" style={{ textShadow: "0 0 30px rgba(249,115,22,0.6)" }}>{tournament.name}</h1>
-                  <div className="mt-2 flex items-center justify-center">
-                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 border border-white/20">
-                      <span className="text-xs font-semibold text-white">{standingsTab === "table" ? "🏆 Overall Rankings" : standingsTab === "warhead" ? "💀 Warhead — Team Kills" : "🔫 Top Fraggers"}</span>
-                    </div>
-                  </div>
+            {/* Card carousel + dots together */}
+            <div className="flex-1 flex flex-col justify-center overflow-hidden relative">
+              {themeIdx > 0 && <button onClick={() => { const el = themeScrollRef.current; if (el) { const cw = el.firstElementChild?.clientWidth ?? 300; el.scrollBy({ left: -(cw + 16), behavior: "smooth" }); }}} className="absolute left-1 z-20 p-1.5 rounded-full bg-black/50 backdrop-blur-md border border-white/20 text-white/80 hover:text-white hover:bg-black/70 transition-all" style={{ top: "45%", transform: "translateY(-50%)" }}><ChevronLeft className="h-5 w-5" /></button>}
+              {themeIdx < standingsThemes.length - 1 && <button onClick={() => { const el = themeScrollRef.current; if (el) { const cw = el.firstElementChild?.clientWidth ?? 300; el.scrollBy({ left: cw + 16, behavior: "smooth" }); }}} className="absolute right-1 z-20 p-1.5 rounded-full bg-black/50 backdrop-blur-md border border-white/20 text-white/80 hover:text-white hover:bg-black/70 transition-all" style={{ top: "45%", transform: "translateY(-50%)" }}><ChevronRight className="h-5 w-5" /></button>}
+              <div className="overflow-hidden">
+              <div
+                ref={themeScrollRef}
+                className="flex gap-4 overflow-x-auto px-6 py-2 no-scrollbar w-full items-center"
+                style={{ scrollSnapType: "x mandatory", WebkitOverflowScrolling: "touch", paddingBottom: "20px", marginBottom: "-20px" }}
+                onScroll={(e) => {
+                  const el = e.currentTarget;
+                  const cardW = el.firstElementChild?.clientWidth ?? 300;
+                  const gap = 16;
+                  const idx = Math.round(el.scrollLeft / (cardW + gap));
+                  const clamped = Math.max(0, Math.min(idx, standingsThemes.length - 1));
+                  setThemeIdx(clamped);
+                }}
+              >
+                {standingsThemes.map((t, i) => renderCard(t, i))}
+              </div>
+              </div>
+              {/* Theme name + dots */}
+              <div className="pt-2 pb-2 px-4">
+                <p className="text-center text-sm font-bold text-white mb-1.5">{standingsThemes[themeIdx].name}</p>
+                <div className="flex justify-center gap-1.5 flex-wrap">
+                  {standingsThemes.map((t, i) => (
+                    <button
+                      key={t.id}
+                      onClick={() => {
+                        setThemeIdx(i);
+                        const el = themeScrollRef.current;
+                        if (el) {
+                          const cardW = el.firstElementChild?.clientWidth ?? 300;
+                          el.scrollTo({ left: i * (cardW + 16), behavior: "smooth" });
+                        }
+                      }}
+                      className="transition-all duration-300"
+                      style={{
+                        width: themeIdx === i ? "20px" : "6px",
+                        height: "6px",
+                        borderRadius: "3px",
+                        background: themeIdx === i ? t.previewColors[1] : "rgba(255,255,255,0.2)",
+                        boxShadow: themeIdx === i ? `0 0 8px ${t.previewColors[1]}60` : "none",
+                      }}
+                    />
+                  ))}
                 </div>
-                {standingsTab === "table" && (() => {
-                  const half = Math.ceil(standings.length / 2); const leftCol = standings.slice(0, half); const rightCol = standings.slice(half);
-                  const thStyle = (align: string) => ({ padding: "7px 2px", fontSize: "9px", fontWeight: 800 as const, textTransform: "uppercase" as const, letterSpacing: "0.08em", textAlign: align as "center" | "left", color: "rgba(255,255,255,0.7)" });
-                  const getBadge = (rank: number) => rank === 1 ? "bg-gradient-to-r from-yellow-600 via-yellow-400 to-yellow-500 text-black font-black" : rank === 2 ? "bg-gradient-to-r from-gray-400 via-gray-200 to-gray-300 text-black font-black" : rank === 3 ? "bg-gradient-to-r from-orange-700 via-orange-500 to-orange-600 text-white font-black" : "bg-zinc-800/80 text-zinc-300 border border-zinc-700/50";
-                  const renderTable = (slice: StandingRow[], startIdx: number) => (
-                    <div className="overflow-hidden rounded-xl" style={{ backgroundColor: "rgba(0,0,0,0.55)", border: "1px solid rgba(255,255,255,0.1)" }}>
-                      <table className="w-full border-collapse" style={{ fontSize: "14px" }}>
-                        <thead><tr style={{ backgroundColor: "rgba(0,0,0,0.4)", borderBottom: "2px solid rgba(124,58,237,0.4)" }}><th style={{ ...thStyle("center"), padding: "7px 4px" }}>#</th><th style={{ ...thStyle("left"), padding: "7px 4px" }}>Team</th><th style={thStyle("center")}>🍗</th><th style={thStyle("center")}>M</th><th style={thStyle("center")}>P</th><th style={thStyle("center")}>E</th><th style={{ ...thStyle("center"), fontWeight: 900, color: "#a78bfa", padding: "7px 4px" }}>T</th></tr></thead>
-                        <tbody>
-                          {slice.map((row, idx) => {
-                            const rank = startIdx + idx + 1;
-                            return (
-                              <tr key={row.teamId} style={{ backgroundColor: idx % 2 === 0 ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.08)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-                                <td style={{ padding: "6px 4px", textAlign: "center", width: "32px" }}><span className={`inline-flex items-center justify-center rounded-md ${getBadge(rank)}`} style={{ width: "24px", height: "24px", fontSize: "12px", lineHeight: 1 }}>{rank}</span></td>
-                                <td style={{ padding: "6px 4px", textAlign: "left" }}><span className="text-white" style={{ fontSize: "13px", fontWeight: 700, whiteSpace: "nowrap" }}>{row.teamName}</span></td>
-                                <td style={{ padding: "6px 2px", textAlign: "center", fontSize: "13px", fontWeight: 700, fontFamily: "monospace", color: row.chickenDinners > 0 ? "#facc15" : "rgba(255,255,255,0.3)" }}>{row.chickenDinners}</td>
-                                <td style={{ padding: "6px 2px", textAlign: "center", color: "rgba(255,255,255,0.85)", fontSize: "13px", fontWeight: 700, fontFamily: "monospace" }}>{row.matchCount}</td>
-                                <td style={{ padding: "6px 2px", textAlign: "center", color: "white", fontSize: "13px", fontWeight: 700, fontFamily: "monospace" }}>{row.placementPoints}</td>
-                                <td style={{ padding: "6px 2px", textAlign: "center", color: "white", fontSize: "13px", fontWeight: 700, fontFamily: "monospace" }}>{row.totalKills}</td>
-                                <td style={{ padding: "6px 4px", textAlign: "center" }}><span style={{ color: "#a78bfa", fontSize: "15px", fontWeight: 900, fontFamily: "monospace" }}>{row.totalPoints}</span></td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  );
-                  if (standings.length === 0) return (
-                    <div className="flex flex-col items-center justify-center py-16 gap-3">
-                      <span style={{ fontSize: "48px" }}>📊</span>
-                      <p className="text-white font-bold text-lg">No standings yet</p>
-                      <p className="text-sm" style={{ color: "rgba(255,255,255,0.5)" }}>Use <strong>Calculate</strong> to paste Gemini data first</p>
-                    </div>
-                  );
-                  return <div className="flex gap-3 justify-center"><div className="flex-1">{renderTable(leftCol, 0)}</div>{rightCol.length > 0 && <div className="flex-1">{renderTable(rightCol, half)}</div>}</div>;
-                })()}
-                {standingsTab === "warhead" && (
-                  <div className="max-w-lg mx-auto">
-                    <div className="overflow-hidden rounded-2xl" style={{ backgroundColor: "rgba(0,0,0,0.65)", border: "1px solid rgba(239,68,68,0.3)" }}>
-                      <div style={{ background: "linear-gradient(90deg,rgba(239,68,68,0.2),transparent)", padding: "10px 16px", borderBottom: "1px solid rgba(239,68,68,0.2)" }}><div style={{ display: "flex", justifyContent: "space-between", fontSize: "9px", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em", color: "rgba(255,255,255,0.5)" }}><span>Rank · Team</span><span>Kills</span></div></div>
-                      {warheadData.map((row, idx) => { const m = medalStyle(idx + 1); return <div key={row.teamId} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "10px 16px", borderBottom: "1px solid rgba(255,255,255,0.05)", background: idx % 2 === 0 ? "rgba(255,255,255,0.03)" : "transparent" }}><span style={{ background: m.bg, color: m.color, borderRadius: "8px", width: "26px", height: "26px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "12px", fontWeight: 900, flexShrink: 0 }}>{idx + 1}</span><span style={{ flex: 1, color: "white", fontSize: "14px", fontWeight: 700 }}>{row.teamName}</span><span style={{ color: idx === 0 ? "#ef4444" : "rgba(255,255,255,0.85)", fontSize: "18px", fontWeight: 900, fontFamily: "monospace" }}>{row.totalKills}</span><span style={{ color: "rgba(255,255,255,0.3)", fontSize: "10px" }}>💀</span></div>; })}
-                    </div>
-                  </div>
-                )}
-                {standingsTab === "fraggers" && (
-                  <div className="max-w-lg mx-auto">
-                    <div className="overflow-hidden rounded-2xl" style={{ backgroundColor: "rgba(0,0,0,0.65)", border: "1px solid rgba(234,179,8,0.3)" }}>
-                      <div style={{ background: "linear-gradient(90deg,rgba(234,179,8,0.2),transparent)", padding: "10px 16px", borderBottom: "1px solid rgba(234,179,8,0.2)" }}><div style={{ display: "flex", justifyContent: "space-between", fontSize: "9px", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em", color: "rgba(255,255,255,0.5)" }}><span>Rank · Player</span><span>Kills</span></div></div>
-                      {topFraggers.map((p, idx) => { const m = medalStyle(idx + 1); return <div key={p.name} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "10px 16px", borderBottom: "1px solid rgba(255,255,255,0.05)", background: idx % 2 === 0 ? "rgba(255,255,255,0.03)" : "transparent" }}><span style={{ background: m.bg, color: m.color, borderRadius: "8px", width: "26px", height: "26px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "12px", fontWeight: 900, flexShrink: 0 }}>{idx + 1}</span><span style={{ flex: 1, color: "white", fontSize: "14px", fontWeight: 700 }}>{p.name}</span><span style={{ color: idx === 0 ? "#facc15" : "rgba(255,255,255,0.85)", fontSize: "18px", fontWeight: 900, fontFamily: "monospace" }}>{p.kills}</span><span style={{ color: "rgba(255,255,255,0.3)", fontSize: "10px" }}>🔫</span></div>; })}
-                    </div>
-                  </div>
-                )}
-                {standingsTab === "table" && <div style={{ textAlign: "center", marginTop: "6px", fontSize: "9px", color: "rgba(255,255,255,0.4)" }}>🍗 Chicken Dinners · M Matches · P Placement Pts · E Eliminations · T Total</div>}
-                <div className="mt-6 flex items-center justify-center gap-2 text-white/40 text-[10px]"><div className="h-px w-8 bg-gradient-to-r from-transparent to-violet-500/50" /><span className="font-medium text-white/50">{APP_NAME}</span><div className="h-px w-8 bg-gradient-to-l from-transparent to-violet-500/50" /></div>
               </div>
             </div>
           </div>

@@ -1,17 +1,17 @@
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
-import { auth } from "@root/auth";
+import { resolveAuth } from "@/lib/resolveAuth";
 
-export async function DELETE(_: Request, { params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const caller = await resolveAuth(req);
+  if (!caller) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await params;
   const txn = await prisma.transaction.findFirst({
     where: { id },
     include: { wallet: { select: { userId: true } } },
   });
-  if (!txn || txn.wallet.userId !== session.user.id) {
+  if (!txn || txn.wallet.userId !== caller.userId) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 

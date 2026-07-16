@@ -1,25 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
-import { auth } from "@root/auth";
 import { Tournament, Team } from "@/lib/types";
-import { validateSyncKey } from "@/lib/syncKey";
-
-/** Resolve userId from session OR Bearer sync key. Returns { userId, isCollaborator }. */
-async function resolveAuth(req: Request): Promise<{ userId: string; isCollaborator: boolean } | null> {
-  // 1. Try session first
-  const session = await auth();
-  if (session?.user?.id) return { userId: session.user.id, isCollaborator: false };
-
-  // 2. Try Bearer sync key
-  const authHeader = req.headers.get("Authorization") ?? "";
-  const match = authHeader.match(/^Bearer\s+(.+)$/i);
-  if (match) {
-    const userId = await validateSyncKey(match[1].trim());
-    if (userId) return { userId, isCollaborator: true };
-  }
-
-  return null;
-}
+import { resolveAuth } from "@/lib/resolveAuth";
 
 // GET /api/tournaments — fetch all tournaments for the current user (or collaborator)
 export async function GET(req: Request) {
@@ -62,7 +44,17 @@ export async function PUT(req: Request) {
         const allTeamIds = new Set([...incomingTeamMap.keys(), ...storedTeamMap.keys()]);
         const mergedTeams: Team[] = [];
         allTeamIds.forEach(id => {
-          mergedTeams.push(incomingTeamMap.get(id) ?? storedTeamMap.get(id)!);
+          const inc = incomingTeamMap.get(id);
+          const sto = storedTeamMap.get(id);
+          if (!inc) { mergedTeams.push(sto!); return; }
+          if (!sto) { mergedTeams.push(inc); return; }
+          // Both exist — incoming wins, stored fills gaps
+          mergedTeams.push({
+            ...sto,
+            ...inc,
+            phone: inc.phone || sto.phone || undefined,
+            players: (inc.players?.length ? inc.players : sto.players) ?? [],
+          });
         });
         mergedData = { ...incoming, teams: mergedTeams };
       }

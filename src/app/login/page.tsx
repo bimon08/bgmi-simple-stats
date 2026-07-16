@@ -17,6 +17,8 @@ export default function LoginPage() {
       return;
     }
     localStorage.setItem(COLLAB_KEY, key);
+    // Also set as cookie so server middleware can verify
+    document.cookie = `sc_collab_key=${key}; path=/; max-age=${60 * 60 * 24 * 365}; SameSite=Lax`;
     window.location.href = "/";
   };
 
@@ -29,6 +31,7 @@ export default function LoginPage() {
           </div>
           <h1 className="text-xl font-bold text-white">ScoreCalc</h1>
           <p className="text-sm text-zinc-500 mt-1">Tournament Management</p>
+          <p className="text-xs text-amber-400/70 mt-2">Login to save your data</p>
         </div>
 
         {!showCollab ? (

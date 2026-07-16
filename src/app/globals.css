@@ -36,6 +36,8 @@ body[data-modal="open"] nav {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(124,58,237,0.2); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(124,58,237,0.4); }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 ::selection { background: rgba(124,58,237,0.35); color: white; }
 
 /* ── Global button feel ── */

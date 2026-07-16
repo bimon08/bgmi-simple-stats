@@ -1,16 +1,16 @@
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
-import { auth } from "@root/auth";
+import { resolveAuth } from "@/lib/resolveAuth";
 
 // POST /api/tournaments/[id]/bookings/debit — admin: debit all PENDING bookings
-export async function POST(_: Request, { params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const caller = await resolveAuth(req);
+  if (!caller) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await params;
 
   const tournament = await prisma.savedTournament.findFirst({
-    where: { id, userId: session.user.id },
+    where: { id, userId: caller.userId },
   });
   if (!tournament) return NextResponse.json({ error: "Not found" }, { status: 404 });
 

@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
-import { auth } from "@root/auth";
+import { resolveAuth } from "@/lib/resolveAuth";
 
 /**
  * POST /api/wallets/upsert
@@ -11,8 +11,8 @@ import { auth } from "@root/auth";
  * Returns: { wallet, created: boolean }
  */
 export async function POST(req: Request) {
-  const session = await auth();
-  if (!session?.user?.id)
+  const caller = await resolveAuth(req);
+  if (!caller)
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { playerName, phone } = await req.json();
@@ -28,7 +28,7 @@ export async function POST(req: Request) {
 
   // Check if wallet already exists for this user + phone
   const existing = await prisma.wallet.findFirst({
-    where: { userId: session.user.id, phone: { endsWith: normalizedPhone } },
+    where: { userId: caller.userId, phone: { endsWith: normalizedPhone } },
   });
 
   if (existing) {
@@ -46,7 +46,7 @@ export async function POST(req: Request) {
   // Create new wallet with balance 0
   const wallet = await prisma.wallet.create({
     data: {
-      userId: session.user.id,
+      userId: caller.userId,
       playerName,
       phone: normalizedPhone,
       balance: 0,
