@@ -168,11 +168,6 @@ export default function TeamsPage() {
 
     authFetch("/api/tournaments")
       .then((r) => {
-        if (r.status === 401) {
-          // Not authenticated — redirect to login
-          window.location.href = "/login";
-          return null;
-        }
         return r.ok ? r.json() : null;
       })
       .then((json) => {
