@@ -238,31 +238,6 @@ export default function TeamsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Retry auto-sync when network comes back
-  useEffect(() => {
-    const onOnline = () => { if (syncStatus === 'offline') scheduleSyncDebounce(); };
-    window.addEventListener('online', onOnline);
-    return () => window.removeEventListener('online', onOnline);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [syncStatus]);
-
-  // Sync when tab comes back into focus (catches collaborator changes at no extra cost)
-  useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState === 'visible' && navigator.onLine) {
-        // If a debounced sync is pending, fire it immediately instead of waiting
-        if (syncTimer.current) {
-          clearTimeout(syncTimer.current);
-          syncTimer.current = null;
-        }
-        doSync(false);
-      }
-    };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
 
   // Native back-button: push a history entry whenever any overlay opens, pop to close the top-most one
   useEffect(() => {
