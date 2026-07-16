@@ -1652,7 +1652,7 @@ export default function TeamsPage() {
                           {isDropdownOpen && (
                             <div className="absolute top-full left-0 right-0 mt-1 z-20 rounded-lg bg-zinc-800 border border-zinc-700 shadow-xl max-h-48 overflow-y-auto">
                               {isAssigned && <button onClick={() => { unassignTeam(group.group); setOpenDropdown(null); }} className="w-full text-left px-3 py-2 text-xs text-red-400 hover:bg-red-500/10 transition-colors border-b border-zinc-700/50">✕ Unassign</button>}
-                              {tournament.teams.filter((t) => !assignedTeamIds.has(t.id)).map((t) => (
+                              {tournament.teams.filter((t) => !t.out && !assignedTeamIds.has(t.id)).map((t) => (
                                 <button key={t.id} onClick={() => { assignTeam(group.group, t.id); setOpenDropdown(null); }} className={`w-full text-left px-3 py-2 text-xs transition-colors hover:bg-zinc-700 ${t.id === group.teamId ? "text-violet-400 font-semibold" : "text-zinc-300"}`}>{t.name}</button>
                               ))}
                             </div>
