@@ -1,5 +1,5 @@
-import { auth } from "@root/auth";
 import { NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 
 /** Paths that don't require authentication */
 const PUBLIC_PATHS = [
@@ -11,7 +11,7 @@ const PUBLIC_PATHS = [
   "/api/share",
 ];
 
-export default auth((req) => {
+export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   // Allow public paths
@@ -28,8 +28,13 @@ export default auth((req) => {
     return NextResponse.next();
   }
 
-  // Check for authenticated session
-  if (req.auth) {
+  // Check for next-auth session token cookie (JWT strategy)
+  const hasSession =
+    req.cookies.has("authjs.session-token") ||
+    req.cookies.has("__Secure-authjs.session-token") ||
+    req.cookies.has("next-auth.session-token") ||
+    req.cookies.has("__Secure-next-auth.session-token");
+  if (hasSession) {
     return NextResponse.next();
   }
 
@@ -43,7 +48,7 @@ export default auth((req) => {
   const loginUrl = new URL("/login", req.url);
   loginUrl.searchParams.set("callbackUrl", pathname);
   return NextResponse.redirect(loginUrl);
-});
+}
 
 export const config = {
   matcher: [
