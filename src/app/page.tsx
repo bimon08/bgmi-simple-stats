@@ -309,6 +309,10 @@ export default function TeamsPage() {
         positions: group.matches.map((m) => m.position),
         matchCount: group.matches.length,
       };
+    }).filter((row) => {
+      // Exclude teams marked as OUT from standings
+      const team = t.teams.find((tm) => tm.id === row.teamId);
+      return !team?.out;
     });
 
     // Add 0-stat rows for registered IN teams that didn't appear in any group
