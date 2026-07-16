@@ -1715,20 +1715,12 @@ export default function TeamsPage() {
 
       {/* SLOTS MODAL */}
       {showSlots && tournament && (() => {
-        // DEV: Pad slots with dummy teams for testing (UI only, remove later)
-        const paddedSlots = [...slotAssignments];
-        const SLOT_DUMMY_TARGET = 25;
-        const slotDummyNames = ["Alpha","Bravo","Charlie","Delta","Echo","Foxtrot","Golf","Hotel","India","Juliet","Kilo","Lima","Mike","Nova","Oscar","Papa","Quebec","Romeo","Sierra","Tango","Uniform","Victor","Whiskey","Xray","Yankee"];
-        if (paddedSlots.length < SLOT_DUMMY_TARGET) {
-          for (let i = paddedSlots.length; i < SLOT_DUMMY_TARGET; i++) {
-            paddedSlots.push({ id: `dummy-slot-${i}`, name: slotDummyNames[i] || `Team ${i+1}`, slot: startSlot + i, players: [], out: false } as typeof paddedSlots[0]);
-          }
-        }
+
 
         const renderSlotCard = (t: typeof standingsThemes[0], cardIdx: number) => {
-          const total = paddedSlots.length;
+          const total = slotAssignments.length;
           const perCol = Math.ceil(total / 2);
-          const cols = [paddedSlots.slice(0, perCol), paddedSlots.slice(perCol)].filter(c => c.length > 0);
+          const cols = [slotAssignments.slice(0, perCol), slotAssignments.slice(perCol)].filter(c => c.length > 0);
 
           // Dynamic sizing
           const rowPad = perCol > 12 ? "1px 2px" : perCol > 9 ? "1px 3px" : perCol > 7 ? "2px 3px" : "3px 4px";
@@ -1861,17 +1853,7 @@ export default function TeamsPage() {
         tournament.geminiData?.groups.forEach((group) => group.matches.forEach((match) => Object.entries(match.playerKills).forEach(([p, k]) => killMap.set(p, (killMap.get(p) || 0) + k))));
         const topFraggers = [...killMap.entries()].map(([name, kills]) => ({ name, kills })).sort((a, b) => b.kills - a.kills).slice(0, 20);
 
-        // DEV: Pad with dummy teams for preview testing (UI only, remove later)
-        const DUMMY_TARGET = 25;
-        const dummyNames = ["Alpha","Bravo","Charlie","Delta","Echo","Foxtrot","Golf","Hotel","India","Juliet","Kilo","Lima","Mike","Nova","Oscar","Papa","Quebec","Romeo","Sierra","Tango","Uniform","Victor","Whiskey","Xray","Yankee"];
-        const paddedStandings = [...standings];
-        if (paddedStandings.length < DUMMY_TARGET) {
-          const lastPts = paddedStandings[paddedStandings.length - 1]?.totalPoints ?? 10;
-          for (let i = paddedStandings.length; i < DUMMY_TARGET; i++) {
-            paddedStandings.push({ teamId: `dummy-${i}`, teamName: dummyNames[i] || `Team ${i+1}`, group: "A", players: [], chickenDinners: Math.random() > 0.7 ? 1 : 0, matchCount: 4, placementPoints: Math.max(1, lastPts - (i - standings.length) * 2), totalKills: Math.floor(Math.random() * 15), totalPoints: Math.max(1, lastPts - (i - standings.length) * 2), lastMatchPosition: i + 1, positions: [] });
-          }
-        }
-        // Use paddedStandings in renderCard instead of standings for testing
+
 
         const renderCard = (t: typeof standingsThemes[0], cardIdx: number) => {
           const medalStyle = (rank: number) => rank === 1 ? { bg: t.rank1, color: "#000" } : rank === 2 ? { bg: t.rank2, color: "#000" } : rank === 3 ? { bg: t.rank3, color: "#fff" } : { bg: t.rankDefault, color: t.rankDefaultText };
@@ -1952,19 +1934,19 @@ export default function TeamsPage() {
 
           /* ─── Table always multi-col, dynamic sizing ─── */
           const renderStandingsTable = () => {
-            if (paddedStandings.length === 0) return (
+            if (standings.length === 0) return (
               <div className="flex flex-col items-center justify-center py-12 gap-2">
                 <span style={{ fontSize: "36px" }}>📊</span>
                 <p style={{ color: t.cellText, fontWeight: 700, fontSize: "14px" }}>No standings yet</p>
               </div>
             );
 
-            const total = paddedStandings.length;
+            const total = standings.length;
             const numCols = 2;
             const perCol = Math.ceil(total / numCols);
-            const cols: typeof paddedStandings[] = [];
+            const cols: typeof standings[] = [];
             for (let c = 0; c < numCols; c++) {
-              const slice = paddedStandings.slice(c * perCol, (c + 1) * perCol);
+              const slice = standings.slice(c * perCol, (c + 1) * perCol);
               if (slice.length > 0) cols.push(slice);
             }
 
