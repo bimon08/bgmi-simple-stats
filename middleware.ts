@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 const PUBLIC_PATHS = [
   "/login",
   "/pay",
+  "/t",
   "/api/auth",
   "/api/pay",
   "/api/share",
