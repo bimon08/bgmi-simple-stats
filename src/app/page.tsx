@@ -2032,6 +2032,7 @@ export default function TeamsPage() {
                         <span style={{ width: "18px", fontSize: headerFs, fontWeight: 800, textTransform: "uppercase", textAlign: "center", color: isMinimal ? t.legendText : t.headerText }}>#</span>
                         <span style={{ flex: 1, fontSize: headerFs, fontWeight: 800, textTransform: "uppercase", color: isMinimal ? t.legendText : t.headerText }}>Team</span>
                         <span style={{ width: "14px", fontSize: headerFs, fontWeight: 800, textAlign: "center", color: isMinimal ? t.legendText : t.headerText }}>🍗</span>
+                        <span style={{ width: "16px", fontSize: headerFs, fontWeight: 800, textTransform: "uppercase", textAlign: "center", color: isMinimal ? t.legendText : t.headerText }}>PP</span>
                         <span style={{ width: "16px", fontSize: headerFs, fontWeight: 800, textTransform: "uppercase", textAlign: "center", color: isMinimal ? t.legendText : t.headerText }}>MP</span>
                         <span style={{ width: "16px", fontSize: headerFs, fontWeight: 800, textTransform: "uppercase", textAlign: "center", color: isMinimal ? t.legendText : t.headerText }}>K</span>
                         <span style={{ width: "20px", fontSize: headerFs, fontWeight: 800, textTransform: "uppercase", textAlign: "right", color: t.accentColor }}>T</span>
@@ -2056,6 +2057,7 @@ export default function TeamsPage() {
                           )}
                           <span style={{ flex: 1, color: t.cellText, fontSize: fs, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden" }}>{row.teamName.slice(0, 7)}</span>
                           <span style={{ width: "14px", textAlign: "center", fontSize: fs, fontWeight: 700, fontFamily: "monospace", color: row.chickenDinners > 0 ? "#facc15" : "rgba(255,255,255,0.2)" }}>{row.chickenDinners}</span>
+                          <span style={{ width: "16px", textAlign: "center", color: t.cellText, fontSize: fs, fontWeight: 600, fontFamily: "monospace" }}>{row.placementPoints}</span>
                           <span style={{ width: "16px", textAlign: "center", color: t.cellText, fontSize: fs, fontWeight: 600, fontFamily: "monospace", opacity: 0.7 }}>{row.matchCount}</span>
                           <span style={{ width: "16px", textAlign: "center", color: t.cellText, fontSize: fs, fontWeight: 600, fontFamily: "monospace" }}>{row.totalKills}</span>
                           <span style={{ color: t.accentColor, fontSize: scoreFs, fontWeight: 900, fontFamily: "monospace", width: "20px", textAlign: "right" }}>{row.totalPoints}</span>
