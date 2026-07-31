@@ -167,3 +167,42 @@ export function syncPastTeamsFromTournaments(tournaments: Tournament[]): PastTea
   savePastTeams(merged);
   return merged;
 }
+
+/** Split active teams randomly into two groups.
+ *  Odd count → latest-added team (last in array) goes to waiting list. */
+export function splitTeamsRandomly(teams: import("./types").Team[], groupCount: number = 2): {
+  groups: Record<string, string[]>;  // label → team IDs
+  waiting: string[];
+} {
+  const { groupLabels } = require("./groups");
+  const labels: string[] = groupLabels(groupCount);
+  const active = teams.filter(t => !t.out);
+  const result: Record<string, string[]> = {};
+  labels.forEach(l => { result[l] = []; });
+
+  if (active.length === 0) return { groups: result, waiting: [] };
+
+  const toSplit = [...active];
+  const waiting: string[] = [];
+
+  // Remove leftovers that don't divide evenly into groupCount
+  const remainder = toSplit.length % groupCount;
+  for (let i = 0; i < remainder; i++) {
+    waiting.push(toSplit.pop()!.id);
+  }
+
+  // Fisher-Yates shuffle
+  for (let i = toSplit.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [toSplit[i], toSplit[j]] = [toSplit[j], toSplit[i]];
+  }
+
+  // Distribute evenly across groups
+  const perGroup = Math.floor(toSplit.length / groupCount);
+  labels.forEach((label, idx) => {
+    result[label] = toSplit.slice(idx * perGroup, (idx + 1) * perGroup).map(t => t.id);
+  });
+
+  return { groups: result, waiting };
+}
+

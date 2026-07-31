@@ -1,5 +1,5 @@
 "use client";
-import { Pen, UserPlus, Pencil, ListX, Trash2 } from "lucide-react";
+import { Pen, UserPlus, Pencil, ListX, Trash2, SlidersHorizontal } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Tournament, PointSystem, DEFAULT_BGMI_POINTS } from "@/lib/types";
@@ -10,11 +10,12 @@ interface Props {
   onClose: () => void;
   onEditTeams: () => void;
   onOpenPointSystem: () => void;
+  onOpenAdvanced: () => void;
   onDelete: (id: string) => void;
 }
 
 export default function EditSheet({
-  tournament, save, onClose, onEditTeams, onOpenPointSystem, onDelete,
+  tournament, save, onClose, onEditTeams, onOpenPointSystem, onOpenAdvanced, onDelete,
 }: Props) {
   const [showRename, setShowRename] = useState(false);
   const [renameValue, setRenameValue] = useState(tournament.name);
@@ -39,6 +40,10 @@ export default function EditSheet({
         onClose();
         toast.success("Match data cleared");
       }
+    },
+    {
+      icon: <SlidersHorizontal className="h-5 w-5" />, label: "Advanced",
+      action: () => { onClose(); onOpenAdvanced(); }
     },
     {
       icon: <Trash2 className="h-5 w-5" />, label: "Delete tournament", danger: true,

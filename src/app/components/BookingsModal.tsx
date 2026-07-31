@@ -157,7 +157,10 @@ export default function BookingsModal({ tournament, save, onClose, onSyncNow }: 
               <div key={t.id} className="flex items-center gap-3 px-3 py-2.5 rounded-2xl" style={{ background: isConfirmed ? "rgba(37,211,102,0.06)" : isAdminBooked ? "rgba(124,58,237,0.06)" : isPending ? "rgba(250,204,21,0.04)" : "rgba(255,255,255,0.03)", border: `1px solid ${isConfirmed ? "rgba(37,211,102,0.2)" : isAdminBooked ? "rgba(124,58,237,0.25)" : isPending ? "rgba(250,204,21,0.15)" : "rgba(255,255,255,0.06)"}` }}>
                 <div className="h-7 w-7 rounded-lg flex items-center justify-center shrink-0 text-[10px] font-black" style={{ background: "rgba(124,58,237,0.18)", color: "#a78bfa" }}>{String(idx + 1).padStart(2, "00")}</div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold truncate" style={{ color: isConfirmed ? "#4ade80" : isAdminBooked ? "#c4b5fd" : "white" }}>{t.name}</p>
+                  <p className="text-sm font-bold truncate" style={{ color: isConfirmed ? "#4ade80" : isAdminBooked ? "#c4b5fd" : "white" }}>
+                    {tournament.splitEnabled && t.group && t.group !== "waiting" && <span className="mr-1 text-[9px] px-1 py-0.5 rounded" style={{ background: "rgba(124,58,237,0.2)", color: "#c4b5fd" }}>{t.group}</span>}
+                    {t.name}
+                  </p>
                   <p className="text-[11px] truncate" style={{ color: "rgba(167,139,250,0.4)" }}>{t.phone ?? "No number"}</p>
                 </div>
                 <div className="shrink-0 flex items-center gap-1.5">

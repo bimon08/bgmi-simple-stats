@@ -22,6 +22,10 @@ import TeamEditScreen from "./components/TeamEditScreen";
 import PointSystemModal from "./components/PointSystemModal";
 import EditSheet from "./components/EditSheet";
 import AddTeamsScreen from "./components/AddTeamsScreen";
+import AdvancedScreen from "./components/AdvancedScreen";
+import SplitScreen from "./components/SplitScreen";
+import GroupFilterDropdown from "./components/GroupFilterDropdown";
+import { groupLabels } from "@/lib/groups";
 import SYNCED_PLAYERS from "@/data/players.json";
 
 import {
@@ -160,6 +164,12 @@ export default function TeamsPage() {
   const themeScrollRef = useRef<HTMLDivElement>(null);
   const [slotThemeIdx, setSlotThemeIdx] = useState(0);
   const slotThemeScrollRef = useRef<HTMLDivElement>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showSplit, setShowSplit] = useState(false);
+  const [groupFilter, setGroupFilter] = useState<string>("all");
+  const [exportPopover, setExportPopover] = useState<"slots" | "standings" | null>(null);
+  const [waGroupLinks, setWaGroupLinks] = useState<Record<string, string>>({});
+  const [waLinkTab, setWaLinkTab] = useState(0);
 
   // Online-first: fetch from server first, fall back to local if offline
   useEffect(() => {
@@ -245,7 +255,7 @@ export default function TeamsPage() {
       showCreate || showAddScreen || !!editingTeam ||
       showStats || showStandings || showSlots ||
       showPointSystem || showEdit ||
-      showMore || showRename;
+      showMore || showRename || showAdvanced || showSplit;
 
     if (anyOpen) {
       history.pushState({ overlay: true }, '');
@@ -253,6 +263,8 @@ export default function TeamsPage() {
 
     const onPop = () => {
       // Close in reverse-depth order (deepest first)
+      if (showSplit)     { setShowSplit(false); return; }
+      if (showAdvanced)  { setShowAdvanced(false); return; }
       if (editingTeam)    { setEditingTeam(null); return; }
       if (showStats)      { setShowStats(false); return; }
       if (showStandings)  { setShowStandings(false); return; }
@@ -269,7 +281,7 @@ export default function TeamsPage() {
     return () => window.removeEventListener('popstate', onPop);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showCreate, showAddScreen, editingTeam, showStats, showStandings,
-      showSlots, showPointSystem, showEdit, showMore, showRename]);
+      showSlots, showPointSystem, showEdit, showMore, showRename, showAdvanced, showSplit]);
 
   const computeStandings = (t: Tournament) => {
     if (!t.geminiData) { setStandings([]); return; }
@@ -587,6 +599,7 @@ export default function TeamsPage() {
           .replace(/\bjilr\b|\bjillr\b/g, "join");
         setWaGroupLink(t.waGroup ?? "");
         setWaMessage(savedMsg || defaultMsg);
+        setWaGroupLinks(t.waGroupLinks ?? {});
         setShowRoomInfo(true);
         break;
       }
@@ -1144,7 +1157,9 @@ export default function TeamsPage() {
   };
   const toggleExpand = (g: string) => setExpandedGroups((p) => { const n = new Set(p); n.has(g) ? n.delete(g) : n.add(g); return n; });
   const assignedTeamIds = new Set(Object.values(assignments));
-  const slotAssignments = tournament?.teams.filter(t => !t.out).map((t, i) => ({ ...t, slot: startSlot + i })) || [];
+  const slotAssignments = (tournament?.teams.filter(t => !t.out && (
+    !tournament.splitEnabled || groupFilter === "all" || t.group === groupFilter
+  )) || []).map((t, i) => ({ ...t, slot: startSlot + i }));
 
 
   const captureRef = useCallback(async (ref: React.RefObject<HTMLDivElement | null>, download = false, filename = "image") => {
@@ -1171,7 +1186,7 @@ export default function TeamsPage() {
   }, []);
 
   // Hide bottom nav when any sheet/modal is open
-  const anyModalOpen = showCreate || showAddScreen || showEdit || showStats || showStandings || showSlots || showPointSystem;
+  const anyModalOpen = showCreate || showAddScreen || showEdit || showStats || showStandings || showSlots || showPointSystem || showAdvanced || showSplit;
   // Lock body scroll when any modal/overlay is open
   useEffect(() => {
     document.body.dataset.modal = anyModalOpen ? "open" : "";
@@ -1333,7 +1348,7 @@ export default function TeamsPage() {
                         >{t.name}</p>
                       )}
                       <div className="flex items-center gap-2 mt-0.5">
-                        <p className="text-xs" style={{ color: "rgba(167,139,250,0.5)" }}>Teams: {t.teams.filter(tm => !tm.out).length}</p>
+                        <p className="text-xs" style={{ color: "rgba(167,139,250,0.5)" }}>Teams: {t.teams.filter(tm => !tm.out).length}{t.splitEnabled && ` · ${t.groupCount ?? 2} Groups`}</p>
                         {t.updatedAt && (
                           <span className="text-[10px]" style={{ color: "rgba(167,139,250,0.3)" }}>
                             · {new Date(t.updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true })}
@@ -1568,7 +1583,28 @@ export default function TeamsPage() {
             setEditingPoints(tournament.pointSystem ?? DEFAULT_BGMI_POINTS);
             setShowPointSystem(true);
           }}
+          onOpenAdvanced={() => { setShowAdvanced(true); }}
           onDelete={handleDeleteTournament}
+        />
+      )}
+
+      {/* ADVANCED SCREEN */}
+      {showAdvanced && tournament && (
+        <AdvancedScreen
+          tournament={tournament}
+          standings={standings}
+          save={save}
+          onClose={() => setShowAdvanced(false)}
+          onOpenSplit={() => { setShowAdvanced(false); setShowSplit(true); }}
+        />
+      )}
+
+      {/* SPLIT SCREEN */}
+      {showSplit && tournament && (
+        <SplitScreen
+          tournament={tournament}
+          save={save}
+          onClose={() => setShowSplit(false)}
         />
       )}
 
@@ -1576,12 +1612,15 @@ export default function TeamsPage() {
       {showStats && tournament && (
         <div className="fixed inset-0 z-[55] overflow-y-auto" style={{ background: "#0c0914" }}>
           <div className="max-w-3xl mx-auto px-4 py-6">
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h1 className="text-xl font-bold text-white">Calculate — {tournament.name}</h1>
-                <p className="text-xs mt-0.5" style={{ color: "rgba(167,139,250,0.5)" }}>{groups.length > 0 ? `${groups.length} groups · ${matchesDetected} matches` : "Follow the guide below to get started"}</p>
+            <div className="flex items-start justify-between mb-6">
+              <div className="flex-1 min-w-0">
+                <h1 className="text-xl font-bold text-white">Calculate</h1>
+                <div className="flex items-center gap-2 mt-1">
+                  <p className="text-xs" style={{ color: "rgba(167,139,250,0.5)" }}>{groups.length > 0 ? `${groups.length} groups · ${matchesDetected} matches` : tournament.name}</p>
+                  {tournament.splitEnabled && <GroupFilterDropdown value={groupFilter} onChange={setGroupFilter} groupCount={tournament.groupCount ?? 2} showFinal={tournament.teams.some(t => t.group === "final")} />}
+                </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 shrink-0 pt-1">
                 {groups.length > 0 && (
                   <button
                     onClick={() => {
@@ -1662,6 +1701,7 @@ export default function TeamsPage() {
 
             ) : (
               <div className="space-y-3">
+
                 {/* Match selector pills */}
                 {matchesDetected > 1 && (
                   <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1" style={{ scrollbarWidth: "none" }}>
@@ -1684,7 +1724,13 @@ export default function TeamsPage() {
                     ))}
                   </div>
                 )}
-                {groups.map((group) => {
+                {groups.filter(g => {
+                  if (!tournament.splitEnabled || groupFilter === "all") return true;
+                  const teamId = g.teamId || assignments[g.group];
+                  if (!teamId) return true; // unassigned groups always show
+                  const team = tournament.teams.find(t => t.id === teamId);
+                  return team?.group === groupFilter;
+                }).map((group) => {
                   const topKiller = getTopKiller(group);
                   const isAssigned = !!group.teamId;
                   const isExpanded = expandedGroups.has(group.group);
@@ -1695,14 +1741,17 @@ export default function TeamsPage() {
                         <div className={`flex items-center justify-center h-8 w-8 rounded-lg text-sm font-black shrink-0 ${group.rank === 1 ? "bg-gradient-to-br from-yellow-500 to-amber-600 text-black" : group.rank === 2 ? "bg-gradient-to-br from-gray-300 to-gray-500 text-black" : group.rank === 3 ? "bg-gradient-to-br from-orange-500 to-orange-700 text-white" : "bg-zinc-800 text-zinc-400 border border-zinc-700"}`}>{group.rank}</div>
                         <div className="flex-1 relative">
                           <button onClick={() => setOpenDropdown(isDropdownOpen ? null : group.group)} className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-all ${isAssigned ? "bg-violet-500/10 border border-violet-500/30 text-white" : "bg-zinc-800 border border-zinc-700/60 text-zinc-400"}`}>
-                            <span className="truncate">{isAssigned ? group.teamName : "Assign team..."}</span>
+                            <span className="truncate">{isAssigned ? <>{(() => { const tm = tournament.teams.find(t => t.id === group.teamId); const g = tm?.group; return g && g !== "waiting" ? <span className="mr-1 text-[9px] px-1 py-0.5 rounded" style={{ background: "rgba(124,58,237,0.2)", color: "#c4b5fd" }}>{g === "final" ? "F" : g}</span> : null; })()}{group.teamName}</> : "Assign team..."}</span>
                             <ChevronDown className={`h-3 w-3 shrink-0 ml-2 transition-transform ${isDropdownOpen ? "rotate-180" : ""}`} />
                           </button>
                           {isDropdownOpen && (
                             <div className="absolute top-full left-0 right-0 mt-1 z-20 rounded-lg bg-zinc-800 border border-zinc-700 shadow-xl max-h-48 overflow-y-auto">
                               {isAssigned && <button onClick={() => { unassignTeam(group.group); setOpenDropdown(null); }} className="w-full text-left px-3 py-2 text-xs text-red-400 hover:bg-red-500/10 transition-colors border-b border-zinc-700/50">✕ Unassign</button>}
                               {tournament.teams.filter((t) => !t.out && !assignedTeamIds.has(t.id)).map((t) => (
-                                <button key={t.id} onClick={() => { assignTeam(group.group, t.id); setOpenDropdown(null); }} className={`w-full text-left px-3 py-2 text-xs transition-colors hover:bg-zinc-700 ${t.id === group.teamId ? "text-violet-400 font-semibold" : "text-zinc-300"}`}>{t.name}</button>
+                                <button key={t.id} onClick={() => { assignTeam(group.group, t.id); setOpenDropdown(null); }} className={`w-full text-left px-3 py-2 text-xs transition-colors hover:bg-zinc-700 ${t.id === group.teamId ? "text-violet-400 font-semibold" : "text-zinc-300"}`}>
+                                  {tournament.splitEnabled && t.group && t.group !== "waiting" && <span className="mr-1 text-[9px] px-1 py-0.5 rounded" style={{ background: "rgba(124,58,237,0.25)", color: "#c4b5fd" }}>{t.group === "final" ? "F" : t.group}</span>}
+                                  {t.name}
+                                </button>
                               ))}
                             </div>
                           )}
@@ -1804,6 +1853,11 @@ export default function TeamsPage() {
                   <div className="mt-1 inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full" style={{ background: t.badgeBg, border: `1px solid ${t.badgeBorder}` }}>
                     <span className="text-[9px] font-semibold" style={{ color: t.badgeText }}>📋 Slot Assignments</span>
                   </div>
+                  {tournament.splitEnabled && groupFilter !== "all" && (
+                    <div className="mt-1 inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full" style={{ background: t.badgeBg, border: `1px solid ${t.badgeBorder}` }}>
+                      <span className="text-[9px] font-bold" style={{ color: t.badgeText }}>{groupFilter === "final" ? "🏆 Final" : `Group ${groupFilter}`}</span>
+                    </div>
+                  )}
                 </div>
                 <div className="flex-1" style={{ display: "flex", gap: "6px" }}>
                   {cols.map((col, ci) => (
@@ -1838,11 +1892,21 @@ export default function TeamsPage() {
               <button onClick={() => setShowSlots(false)} className="text-white/70 hover:text-white bg-white/5 border border-white/10 p-2 rounded-xl transition-all"><X className="h-5 w-5" /></button>
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold tracking-widest text-white/30">SLOTS</span>
-                <div className="flex items-center gap-1 px-2 py-1 bg-white/5 border border-white/10 rounded-lg"><span className="text-[10px] text-white/50">Start</span><input type="number" value={startSlot} onChange={(e) => setStartSlot(Math.max(1, parseInt(e.target.value) || 1))} className="w-8 bg-transparent text-xs text-white text-center focus:outline-none" min={1} /></div>
+                {tournament.splitEnabled && (
+                  <GroupFilterDropdown value={groupFilter} onChange={setGroupFilter} groupCount={tournament.groupCount ?? 2} showFinal={tournament.teams.some(t => t.group === "final")} />
+                )}
               </div>
-              <div className="flex gap-2">
-                <button onClick={() => captureRef(slotsRef, false, tournament.name || "slots")} disabled={isCapturing} className="text-white/70 hover:text-orange-400 bg-white/5 border border-white/10 p-2 rounded-xl transition-all disabled:opacity-50"><Share2 className="h-5 w-5" /></button>
-                <button onClick={() => captureRef(slotsRef, true, tournament.name || "slots")} disabled={isCapturing} className="text-white/70 hover:text-blue-400 bg-white/5 border border-white/10 p-2 rounded-xl transition-all disabled:opacity-50"><Download className="h-5 w-5" /></button>
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1 px-2 py-1 bg-white/5 border border-white/10 rounded-lg"><span className="text-[10px] text-white/50">Start</span><input type="number" value={startSlot} onChange={(e) => setStartSlot(Math.max(1, parseInt(e.target.value) || 1))} className="w-8 bg-transparent text-xs text-white text-center focus:outline-none" min={1} /></div>
+                <div className="relative">
+                  <button onClick={() => setExportPopover(exportPopover === "slots" ? null : "slots")} disabled={isCapturing} className="text-white/70 hover:text-white bg-white/5 border border-white/10 p-2 rounded-xl transition-all disabled:opacity-50"><Share2 className="h-5 w-5" /></button>
+                  {exportPopover === "slots" && (
+                    <div className="absolute right-0 top-full mt-1 z-30 rounded-xl overflow-hidden anim-fade-in" style={{ background: "#1a0f2e", border: "1px solid rgba(124,58,237,0.3)", boxShadow: "0 8px 32px rgba(0,0,0,0.6)" }}>
+                      <button onClick={() => { captureRef(slotsRef, false, tournament.name || "slots"); setExportPopover(null); }} className="flex items-center gap-2 px-4 py-2.5 text-xs font-medium text-white/80 hover:bg-white/5 w-full text-left whitespace-nowrap"><Share2 className="h-3.5 w-3.5" /> Share</button>
+                      <button onClick={() => { captureRef(slotsRef, true, tournament.name || "slots"); setExportPopover(null); }} className="flex items-center gap-2 px-4 py-2.5 text-xs font-medium text-white/80 hover:bg-white/5 w-full text-left whitespace-nowrap"><Download className="h-3.5 w-3.5" /> Save</button>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -1901,9 +1965,23 @@ export default function TeamsPage() {
 
       {/* STANDINGS MODAL */}
       {showStandings && tournament && (() => {
-        const warheadData = [...standings].sort((a, b) => b.totalKills - a.totalKills);
+        // Group-aware filtering for standings
+        const filteredStandings = tournament.splitEnabled && groupFilter !== "all"
+          ? standings.filter(row => { const team = tournament.teams.find(t => t.id === row.teamId); return team?.group === groupFilter; })
+          : standings;
+        const warheadData = [...filteredStandings].sort((a, b) => b.totalKills - a.totalKills);
+        const filteredTeamIds = tournament.splitEnabled && groupFilter !== "all"
+          ? new Set(tournament.teams.filter(t => t.group === groupFilter).map(t => t.id))
+          : null;
         const killMap = new Map<string, number>();
-        tournament.geminiData?.groups.forEach((group) => group.matches.forEach((match) => Object.entries(match.playerKills).forEach(([p, k]) => killMap.set(p, (killMap.get(p) || 0) + k))));
+        tournament.geminiData?.groups.forEach((group) => {
+          // If filtering by group, only include groups assigned to filtered teams
+          if (filteredTeamIds) {
+            const assignedTeamId = tournament.assignments?.[group.group];
+            if (assignedTeamId && !filteredTeamIds.has(assignedTeamId)) return;
+          }
+          group.matches.forEach((match) => Object.entries(match.playerKills).forEach(([p, k]) => killMap.set(p, (killMap.get(p) || 0) + k)));
+        });
         const topFraggers = [...killMap.entries()].map(([name, kills]) => ({ name, kills })).sort((a, b) => b.kills - a.kills).slice(0, 20);
 
 
@@ -1912,7 +1990,8 @@ export default function TeamsPage() {
           const medalStyle = (rank: number) => rank === 1 ? { bg: t.rank1, color: "#000" } : rank === 2 ? { bg: t.rank2, color: "#000" } : rank === 3 ? { bg: t.rank3, color: "#fff" } : { bg: t.rankDefault, color: t.rankDefaultText };
           const getRankBg = (rank: number) => rank === 1 ? t.rank1 : rank === 2 ? t.rank2 : rank === 3 ? t.rank3 : t.rankDefault;
           const getRankText = (rank: number) => rank === 1 ? "#000" : rank === 2 ? "#000" : rank === 3 ? "#fff" : t.rankDefaultText;
-          const badgeLabel = standingsTab === "table" ? "🏆 Overall Rankings" : standingsTab === "warhead" ? "💀 Team Kills" : "🔫 Top Fraggers";
+          const groupSuffix = tournament.splitEnabled && groupFilter !== "all" ? ` · ${groupFilter === "final" ? "Final" : `Group ${groupFilter}`}` : "";
+          const badgeLabel = (standingsTab === "table" ? "🏆 Overall Rankings" : standingsTab === "warhead" ? "💀 Team Kills" : "🔫 Top Fraggers") + groupSuffix;
 
           const renderTitle = () => {
             switch (t.layout) {
@@ -1960,7 +2039,7 @@ export default function TeamsPage() {
                       <span className="text-[7px] font-semibold uppercase tracking-wider" style={{ color: t.legendText }}>{badgeLabel}</span>
                     </div>
                     <div className="px-2 py-1 rounded-md" style={{ background: t.badgeBg, border: `1px solid ${t.badgeBorder}` }}>
-                      <span className="text-[10px] font-black" style={{ color: t.accentColor }}>{standings.length}</span>
+                      <span className="text-[10px] font-black" style={{ color: t.accentColor }}>{filteredStandings.length}</span>
                     </div>
                   </div>
                 );
@@ -1987,19 +2066,19 @@ export default function TeamsPage() {
 
           /* ─── Table always multi-col, dynamic sizing ─── */
           const renderStandingsTable = () => {
-            if (standings.length === 0) return (
+            if (filteredStandings.length === 0) return (
               <div className="flex flex-col items-center justify-center py-12 gap-2">
                 <span style={{ fontSize: "36px" }}>📊</span>
                 <p style={{ color: t.cellText, fontWeight: 700, fontSize: "14px" }}>No standings yet</p>
               </div>
             );
 
-            const total = standings.length;
+            const total = filteredStandings.length;
             const numCols = 2;
             const perCol = Math.ceil(total / numCols);
-            const cols: typeof standings[] = [];
+            const cols: typeof filteredStandings[] = [];
             for (let c = 0; c < numCols; c++) {
-              const slice = standings.slice(c * perCol, (c + 1) * perCol);
+              const slice = filteredStandings.slice(c * perCol, (c + 1) * perCol);
               if (slice.length > 0) cols.push(slice);
             }
 
@@ -2129,10 +2208,20 @@ export default function TeamsPage() {
             {/* Top bar */}
             <div className="shrink-0 flex items-center justify-between px-4 pt-4 pb-2">
               <button onClick={() => setShowStandings(false)} className="text-white/70 hover:text-white bg-white/5 border border-white/10 p-2 rounded-xl transition-all"><X className="h-5 w-5" /></button>
-              <p className="text-xs font-bold tracking-widest text-white/30">STANDINGS</p>
-              <div className="flex gap-2">
-                <button onClick={() => captureRef(standingsRef, false, `${tournament.name}-${standingsTab}`)} disabled={isCapturing} className="text-white/70 hover:text-orange-400 bg-white/5 border border-white/10 p-2 rounded-xl transition-all disabled:opacity-50"><Share2 className="h-5 w-5" /></button>
-                <button onClick={() => captureRef(standingsRef, true, `${tournament.name}-${standingsTab}`)} disabled={isCapturing} className="text-white/70 hover:text-blue-400 bg-white/5 border border-white/10 p-2 rounded-xl transition-all disabled:opacity-50"><Download className="h-5 w-5" /></button>
+              <div className="flex items-center gap-2">
+                <p className="text-xs font-bold tracking-widest text-white/30">STANDINGS</p>
+                {tournament.splitEnabled && (
+                  <GroupFilterDropdown value={groupFilter} onChange={setGroupFilter} groupCount={tournament.groupCount ?? 2} showFinal={tournament.teams.some(t => t.group === "final")} />
+                )}
+              </div>
+              <div className="relative">
+                <button onClick={() => setExportPopover(exportPopover === "standings" ? null : "standings")} disabled={isCapturing} className="text-white/70 hover:text-white bg-white/5 border border-white/10 p-2 rounded-xl transition-all disabled:opacity-50"><Share2 className="h-5 w-5" /></button>
+                {exportPopover === "standings" && (
+                  <div className="absolute right-0 top-full mt-1 z-30 rounded-xl overflow-hidden anim-fade-in" style={{ background: "#1a0f2e", border: "1px solid rgba(124,58,237,0.3)", boxShadow: "0 8px 32px rgba(0,0,0,0.6)" }}>
+                    <button onClick={() => { captureRef(standingsRef, false, `${tournament.name}-${standingsTab}`); setExportPopover(null); }} className="flex items-center gap-2 px-4 py-2.5 text-xs font-medium text-white/80 hover:bg-white/5 w-full text-left whitespace-nowrap"><Share2 className="h-3.5 w-3.5" /> Share</button>
+                    <button onClick={() => { captureRef(standingsRef, true, `${tournament.name}-${standingsTab}`); setExportPopover(null); }} className="flex items-center gap-2 px-4 py-2.5 text-xs font-medium text-white/80 hover:bg-white/5 w-full text-left whitespace-nowrap"><Download className="h-3.5 w-3.5" /> Save</button>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -2217,17 +2306,29 @@ export default function TeamsPage() {
       {showRoomInfo && tournament && (() => {
         const wasvg = <svg viewBox="0 0 24 24" className="h-4 w-4 fill-white shrink-0"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.127.558 4.126 1.534 5.859L0 24l6.335-1.518A11.96 11.96 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.818 9.818 0 01-5.003-1.371l-.36-.214-3.722.892.934-3.617-.236-.373A9.818 9.818 0 0112 2.182c5.418 0 9.818 4.4 9.818 9.818 0 5.419-4.4 9.818-9.818 9.818z"/></svg>;
         const sentIds = new Set(tournament.waGroupSent ?? []);
-        const buildMsg = (teamName: string) =>
-          waMessage.replace(/\{team\}/g, teamName).replace(/\{link\}/g, waGroupLink.trim() || "—");
+        const gc = tournament.groupCount ?? 2;
+        const allLabels = groupLabels(gc);
+        const activeLabel = waLinkTab > 0 && tournament.splitEnabled ? allLabels[waLinkTab - 1] : null;
+        const buildMsg = (team: typeof tournament.teams[number]) => {
+          // Resolve {link}: use group link when on a group tab, else main link
+          const teamGroup = activeLabel ?? (team.group && team.group !== "waiting" ? team.group : null);
+          const link = teamGroup ? (waGroupLinks[teamGroup] ?? "").trim() || waGroupLink.trim() : waGroupLink.trim();
+          let msg = waMessage.replace(/\{team\}/g, team.name).replace(/\{link\}/g, link || "—");
+          if (teamGroup) {
+            msg = msg.replace("join this group", `join the *Group ${teamGroup}* group`);
+          }
+          return msg;
+        };
         const sendToLeader = (team: typeof tournament.teams[number]) => {
           const clean = (team.phone ?? "").replace(/\D/g, "");
           if (!clean) return;
-          // WhatsApp requires full international number (no +). Prepend 91 for 10-digit Indian numbers.
           const waPhone = clean.length === 10 ? `91${clean}` : clean;
-          window.open(`https://wa.me/${waPhone}?text=${encodeURIComponent(buildMsg(team.name))}`, "_blank", "noopener,noreferrer");
-          // Mark as sent
+          window.open(`https://wa.me/${waPhone}?text=${encodeURIComponent(buildMsg(team))}`, "_blank", "noopener,noreferrer");
           const newSent = [...new Set([...sentIds, team.id])];
-          const updated = { ...tournament, waGroup: waGroupLink.trim(), waMessage, waGroupSent: newSent };
+          const updated = {
+            ...tournament, waGroup: waGroupLink.trim(), waMessage, waGroupSent: newSent,
+            ...(tournament.splitEnabled ? { waGroupLinks } : {}),
+          };
           save(updated as Tournament & { waGroup: string; waMessage: string; waGroupSent: string[] });
           sentIds.add(team.id);
         };
@@ -2240,44 +2341,130 @@ export default function TeamsPage() {
                   <svg viewBox="0 0 24 24" className="h-5 w-5" fill="#25d366"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.127.558 4.126 1.534 5.859L0 24l6.335-1.518A11.96 11.96 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.818 9.818 0 01-5.003-1.371l-.36-.214-3.722.892.934-3.617-.236-.373A9.818 9.818 0 0112 2.182c5.418 0 9.818 4.4 9.818 9.818 0 5.419-4.4 9.818-9.818 9.818z"/></svg>
                   <p className="text-xs font-bold tracking-widest" style={{ color: "rgba(167,139,250,0.6)" }}>WHATSAPP GROUP</p>
                 </div>
-                {/* Group link */}
-                <div>
-                  <p className="text-[10px] font-bold mb-1 uppercase" style={{ color: "rgba(167,139,250,0.45)" }}>Group Invite Link</p>
-                  <input value={waGroupLink} onChange={(e) => {
-                      setWaGroupLink(e.target.value);
-                      save({ ...tournament, waGroup: e.target.value.trim(), waMessage } as typeof tournament & { waGroup: string; waMessage: string });
-                    }}
-                    placeholder="https://chat.whatsapp.com/..."
-                    className="w-full px-3 py-2.5 rounded-xl text-sm text-white focus:outline-none"
-                    style={{ background: "rgba(37,211,102,0.08)", border: "1px solid rgba(37,211,102,0.2)", caretColor: "#25d366" }} />
-                </div>
+                {tournament.splitEnabled && (() => {
+                  const gc = tournament.groupCount ?? 2;
+                  const gLabels = groupLabels(gc);
+                  const hasFinals = tournament.teams.some(t => t.group === "final");
+                  const tabs = ["Main", ...gLabels.map(l => `Group ${l}`), ...(hasFinals ? ["🏆 Final"] : [])];
+                  const [activeTab, setActiveTab] = [waLinkTab, setWaLinkTab];
+                  // Map tab index to group label
+                  const tabToLabel = (i: number): string | null => {
+                    if (i === 0) return null; // Main
+                    if (i <= gLabels.length) return gLabels[i - 1]; // Group A, B, C...
+                    return "final"; // Final tab
+                  };
+                  const currentLabel = tabToLabel(activeTab);
+                  return (
+                    <>
+                      <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1" style={{ scrollbarWidth: "none" }}>
+                        {tabs.map((tab, i) => (
+                          <button key={tab} onClick={() => setActiveTab(i)} className="shrink-0 px-3 py-1 rounded-lg text-[10px] font-bold transition-all" style={{ background: activeTab === i ? "rgba(37,211,102,0.15)" : "rgba(255,255,255,0.04)", border: `1px solid ${activeTab === i ? "rgba(37,211,102,0.3)" : "rgba(255,255,255,0.06)"}`, color: activeTab === i ? "#4ade80" : "rgba(255,255,255,0.35)" }}>
+                            {tab}
+                          </button>
+                        ))}
+                      </div>
+                      {activeTab === 0 ? (
+                        <input value={waGroupLink} onChange={(e) => {
+                            setWaGroupLink(e.target.value);
+                            save({ ...tournament, waGroup: e.target.value.trim(), waMessage } as typeof tournament & { waGroup: string; waMessage: string });
+                          }}
+                          placeholder="https://chat.whatsapp.com/..."
+                          className="w-full px-3 py-2.5 rounded-xl text-sm text-white focus:outline-none"
+                          style={{ background: "rgba(37,211,102,0.08)", border: "1px solid rgba(37,211,102,0.2)", caretColor: "#25d366" }} />
+                      ) : (() => {
+                        const label = currentLabel!;
+                        return (
+                          <input
+                            value={waGroupLinks[label] ?? ""}
+                            onChange={(e) => {
+                              const updated = { ...waGroupLinks, [label]: e.target.value };
+                              setWaGroupLinks(updated);
+                              save({ ...tournament, waGroupLinks: updated });
+                            }}
+                            placeholder={`${label === "final" ? "Final" : `Group ${label}`} link...`}
+                            className="w-full px-3 py-2.5 rounded-xl text-sm text-white focus:outline-none"
+                            style={{ background: "rgba(124,58,237,0.08)", border: "1px solid rgba(124,58,237,0.2)", caretColor: "#a78bfa" }} />
+                        );
+                      })()}
+                    </>
+                  );
+                })()}
+                {/* Non-split: single link */}
+                {!tournament.splitEnabled && (
+                  <div>
+                    <p className="text-[10px] font-bold mb-1 uppercase" style={{ color: "rgba(167,139,250,0.45)" }}>Group Invite Link</p>
+                    <input value={waGroupLink} onChange={(e) => {
+                        setWaGroupLink(e.target.value);
+                        save({ ...tournament, waGroup: e.target.value.trim(), waMessage } as typeof tournament & { waGroup: string; waMessage: string });
+                      }}
+                      placeholder="https://chat.whatsapp.com/..."
+                      className="w-full px-3 py-2.5 rounded-xl text-sm text-white focus:outline-none"
+                      style={{ background: "rgba(37,211,102,0.08)", border: "1px solid rgba(37,211,102,0.2)", caretColor: "#25d366" }} />
+                  </div>
+                )}
                 {/* Message template */}
                 <div>
-                  <p className="text-[10px] font-bold mb-1 uppercase" style={{ color: "rgba(167,139,250,0.45)" }}>Default Message <span style={{ color: "rgba(167,139,250,0.3)" }}>— use &#123;team&#125; and &#123;link&#125;</span></p>
-                  <textarea value={waMessage} onChange={(e) => {
-                      setWaMessage(e.target.value);
-                      save({ ...tournament, waGroup: waGroupLink.trim(), waMessage: e.target.value } as typeof tournament & { waGroup: string; waMessage: string });
-                    }} rows={3}
-                    className="w-full px-3 py-2 rounded-xl text-sm resize-none focus:outline-none"
-                    style={{ background: "rgba(124,58,237,0.08)", border: "1px solid rgba(124,58,237,0.2)", color: "#e9d5ff", caretColor: "#a78bfa" }} />
+                  {(() => {
+                    const tabGc = tournament.groupCount ?? 2;
+                    const tabLabels = groupLabels(tabGc);
+                    const tabLabel = waLinkTab > 0 && tournament.splitEnabled ? tabLabels[waLinkTab - 1] : null;
+                    if (tabLabel) {
+                      // Show preview of what will be sent
+                      const groupLink = (waGroupLinks[tabLabel] ?? "").trim() || "{link}";
+                      const preview = waMessage
+                        .replace(/\{team\}/g, "TeamName")
+                        .replace(/\{link\}/g, groupLink)
+                        .replace("join this group", `join the *Group ${tabLabel}* group`);
+                      return (
+                        <>
+                          <p className="text-[10px] font-bold mb-1 uppercase" style={{ color: "rgba(167,139,250,0.45)" }}>Message Preview · Group {tabLabel}</p>
+                          <div className="w-full px-3 py-2 rounded-xl text-sm whitespace-pre-wrap" style={{ background: "rgba(124,58,237,0.08)", border: "1px solid rgba(124,58,237,0.2)", color: "rgba(229,213,255,0.6)", lineHeight: 1.5, minHeight: "3.5rem" }}>
+                            {preview}
+                          </div>
+                        </>
+                      );
+                    }
+                    return (
+                      <>
+                        <p className="text-[10px] font-bold mb-1 uppercase" style={{ color: "rgba(167,139,250,0.45)" }}>Default Message <span style={{ color: "rgba(167,139,250,0.3)" }}>— use &#123;team&#125; and &#123;link&#125;</span></p>
+                        <textarea value={waMessage} onChange={(e) => {
+                            setWaMessage(e.target.value);
+                            save({ ...tournament, waGroup: waGroupLink.trim(), waMessage: e.target.value } as typeof tournament & { waGroup: string; waMessage: string });
+                          }} rows={3}
+                          className="w-full px-3 py-2 rounded-xl text-sm resize-none focus:outline-none"
+                          style={{ background: "rgba(124,58,237,0.08)", border: "1px solid rgba(124,58,237,0.2)", color: "#e9d5ff", caretColor: "#a78bfa" }} />
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
               {/* Divider */}
               <div className="mx-6 h-px shrink-0" style={{ background: "rgba(124,58,237,0.12)" }} />
               {/* Leaders list — scrollable */}
-              <div className="px-4 pt-3 pb-1 shrink-0">
-                <p className="text-[10px] font-bold" style={{ color: "rgba(167,139,250,0.5)" }}>
-                  LEADERS — {tournament.teams.filter(t => !t.out && t.phone).length}/{tournament.teams.filter(t => !t.out).length} with number
-                </p>
-              </div>
-              <div className="overflow-y-auto flex-1 px-4 pb-4 space-y-2">
-                {tournament.teams.filter(tm => !tm.out).map((team) => {
+              {(() => {
+                const gc = tournament.groupCount ?? 2;
+                const labels = groupLabels(gc);
+                const activeGroupLabel = waLinkTab > 0 && tournament.splitEnabled ? labels[waLinkTab - 1] : null;
+                const visibleTeams = tournament.teams.filter(tm => !tm.out && (!activeGroupLabel || tm.group === activeGroupLabel));
+                const withNumber = visibleTeams.filter(t => t.phone).length;
+                return (
+                  <>
+                    <div className="px-4 pt-3 pb-1 shrink-0">
+                      <p className="text-[10px] font-bold" style={{ color: "rgba(167,139,250,0.5)" }}>
+                        LEADERS{activeGroupLabel ? ` · GROUP ${activeGroupLabel}` : ""} — {withNumber}/{visibleTeams.length} with number
+                      </p>
+                    </div>
+                    <div className="overflow-y-auto flex-1 px-4 pb-4 space-y-2">
+                {visibleTeams.map((team) => {
                   const hasPhone = !!team.phone?.trim();
                   const sent = sentIds.has(team.id);
+                  const gBadge = tournament.splitEnabled && team.group && team.group !== "waiting" && !activeGroupLabel ? team.group : "";
                   return (
                     <div key={team.id} className="flex items-center gap-3 px-3 py-2.5 rounded-2xl" style={{ background: sent ? "rgba(37,211,102,0.06)" : "rgba(255,255,255,0.03)", border: `1px solid ${sent ? "rgba(37,211,102,0.2)" : "rgba(255,255,255,0.05)"}` }}>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-bold truncate" style={{ color: sent ? "#4ade80" : "white" }}>{team.name}</p>
+                        <p className="text-sm font-bold truncate" style={{ color: sent ? "#4ade80" : "white" }}>
+                          {gBadge && <span className="mr-1 text-[9px] px-1 py-0.5 rounded" style={{ background: "rgba(124,58,237,0.2)", color: "#c4b5fd" }}>{gBadge}</span>}{team.name}
+                        </p>
                         <p className="text-[11px] truncate" style={{ color: hasPhone ? "rgba(167,139,250,0.5)" : "rgba(167,139,250,0.2)" }}>
                           {hasPhone ? team.phone : "No number"}
                         </p>
@@ -2295,7 +2482,10 @@ export default function TeamsPage() {
                     </div>
                   );
                 })}
-              </div>
+                    </div>
+                  </>
+                );
+              })()}
               <div className="px-6 pb-5 pt-2 shrink-0">
                 <button onClick={() => setShowRoomInfo(false)} className="w-full py-2 text-sm font-medium" style={{ color: "rgba(196,181,253,0.4)" }}>Close</button>
               </div>

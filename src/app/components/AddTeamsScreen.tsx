@@ -309,7 +309,10 @@ export default function AddTeamsScreen({
                     {initials(team.name)}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold truncate text-white">{team.name}</p>
+                    <p className="text-sm font-semibold truncate text-white">
+                      {tournament.splitEnabled && team.group && team.group !== "waiting" && <span className="mr-1 text-[9px] px-1 py-0.5 rounded" style={{ background: "rgba(124,58,237,0.2)", color: "#c4b5fd" }}>{team.group}</span>}
+                      {team.name}
+                    </p>
                     {team.players && team.players.length > 0 && (
                       <p className="text-xs truncate" style={{ color:"rgba(196,181,253,0.45)" }}>{team.players.join(", ")}</p>
                     )}

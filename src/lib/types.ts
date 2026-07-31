@@ -7,6 +7,7 @@ export interface Team {
   slot?: number;
   players?: string[];
   out?: boolean;
+  group?: string;  // Group label ("A", "B", "C"...) or "waiting"
 }
 
 export interface PlayerKills {
@@ -99,4 +100,11 @@ export interface Tournament {
   shareToken?: string;            // Cached UUID share token (for instant share open)
   shortCode?: string;             // Cached 6-char short code
   sharedFrom?: string;            // 6-char code if imported via share (collaborator mode)
+  splitEnabled?: boolean;         // Whether tournament has been split into groups
+  groupCount?: number;             // Number of groups (default 2)
+  finalStage?: {                  // Final stage advancement rules
+    advancePerGroup: number;      // How many teams from each group go to final
+    totalSlots?: number;          // Total final stage slots (auto-calculated)
+  };
+  waGroupLinks?: Record<string, string>;  // Per-group WA links keyed by label ("A", "B"...)
 }
