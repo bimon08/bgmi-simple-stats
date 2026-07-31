@@ -145,7 +145,7 @@ export default function RoomInfoModal({ tournament, save, onClose }: Props) {
                   <p className="text-[11px] truncate" style={{ color: hasPhone ? "rgba(167,139,250,0.5)" : "rgba(167,139,250,0.2)" }}>{hasPhone ? team.phone : "No number"}</p>
                 </div>
                 {hasPhone ? (
-                  <button onClick={() => sendToLeader(team)} disabled={!sent && !waGroupLink.trim()} className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-white press-scale disabled:opacity-30 disabled:cursor-not-allowed" style={{ background: sent ? "rgba(37,211,102,0.2)" : "linear-gradient(135deg,#25d366,#128c7e)", border: sent ? "1px solid rgba(37,211,102,0.4)" : "none", color: sent ? "#4ade80" : "white" }}>
+                  <button onClick={() => sendToLeader(team)} disabled={!sent && !(activeLabel ? (waGroupLinks[activeLabel] ?? "").trim() || waGroupLink.trim() : waGroupLink.trim())} className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-white press-scale disabled:opacity-30 disabled:cursor-not-allowed" style={{ background: sent ? "rgba(37,211,102,0.2)" : "linear-gradient(135deg,#25d366,#128c7e)", border: sent ? "1px solid rgba(37,211,102,0.4)" : "none", color: sent ? "#4ade80" : "white" }}>
                     {sent ? "✓ Sent" : <><WaIcon size="h-4 w-4" fill="white" /> Send</>}
                   </button>
                 ) : (
