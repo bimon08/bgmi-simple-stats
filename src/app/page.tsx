@@ -323,14 +323,27 @@ export default function TeamsPage() {
     }).catch(() => {}); // fire-and-forget, silently ignore errors
   };
 
-  const copyPrompt = () => { if (!tournament) return; navigator.clipboard.writeText(generatePrompt(tournament.teams)); toast.success("Prompt copied!"); };
+  const copyPrompt = () => { if (!tournament) return; navigator.clipboard.writeText(generatePrompt(tournament.teams.filter(t => !t.out))); toast.success("Prompt copied!"); };
 
   const pasteJson = async () => { try { processJson(await navigator.clipboard.readText()); } catch { toast.error("Allow clipboard access"); } };
+
+  /** Extract JSON from raw text — handles markdown code fences, leading text, etc. */
+  const extractJson = (text: string): string => {
+    // Try to extract from ```json ... ``` or ``` ... ``` fences
+    const fenced = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
+    if (fenced) return fenced[1].trim();
+    // Try to find the first { ... } block
+    const braceStart = text.indexOf('{');
+    const braceEnd = text.lastIndexOf('}');
+    if (braceStart !== -1 && braceEnd > braceStart) return text.slice(braceStart, braceEnd + 1);
+    return text.trim();
+  };
 
   const processJson = (text: string) => {
     if (!tournament) return;
     try {
-      const raw = JSON.parse(text) as GeminiOutput;
+      const jsonStr = extractJson(text);
+      const raw = JSON.parse(jsonStr) as GeminiOutput;
       if (!raw.groups || !Array.isArray(raw.groups)) throw new Error("Invalid JSON");
       const data = normalizeGeminiData(raw, tournament);
       const { assigned, autoAssignments, enrichedTeams } = autoAssignAndEnrich(tournament, data, assignments);
@@ -345,7 +358,11 @@ export default function TeamsPage() {
       toast.success(`${data.groups.length} groups · ${data.matches_detected} matches · ${autoCount} assigned${enriched ? ` · ${enriched} rosters updated` : ""}`);
     } catch (err: unknown) { toast.error((err as Error).message || "Invalid JSON"); }
   };
-  const handlePaste = (e: React.ClipboardEvent) => { const text = e.clipboardData.getData("text"); if (text.trim().startsWith("{")) { e.preventDefault(); processJson(text); } };
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const text = e.clipboardData.getData("text");
+    const trimmed = text.trim();
+    if (trimmed.startsWith("{") || trimmed.startsWith("```")) { e.preventDefault(); processJson(text); }
+  };
   const assignTeam = (groupLabel: string, teamId: string) => {
     if (!tournament) return;
     const na = { ...assignments, [groupLabel]: teamId }; setAssignments(na);
@@ -601,8 +618,8 @@ export default function TeamsPage() {
       )}
 
       {/* SHARE CODE MODAL */}
-      {showShareModal && shareInfo && (
-        <ShareCodeModal shareInfo={shareInfo} onClose={() => setShowShareModal(false)} />
+      {showShareModal && shareInfo && tournament && (
+        <ShareCodeModal tournament={tournament} save={save} shareInfo={shareInfo} onClose={() => setShowShareModal(false)} />
       )}
 
       {/* IMPORT BY CODE MODAL */}

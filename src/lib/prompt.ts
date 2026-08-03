@@ -72,7 +72,7 @@ Track recurring player groups across matches — same players = same team.
 The website will calculate placement points, kill points, totals, and rankings.
 
 ═══════════════════════════════════════
-OUTPUT FORMAT — Return ONLY this JSON
+OUTPUT FORMAT — Return ONLY raw JSON (no markdown, no \`\`\`json fences, no explanation)
 ═══════════════════════════════════════
 
 {
@@ -107,9 +107,10 @@ IMPORTANT RULES
 - If a team doesn't appear in a match, skip that match entry for them
 - "players" = union of all players seen for that group across all matches
 - Don't skip any team or player visible in the screenshots
-- After the JSON, confirm:
+- After the JSON on a NEW LINE, confirm:
   Groups found: X | Matches detected: Y
   Any teams you couldn't match to the roster? List them.
+- **CRITICAL: Output the JSON as raw text. Do NOT wrap it in markdown code fences (\`\`\`json). Just paste the raw { ... } object.**
 
 ═══════════════════════════════════════
 I'll upload images now. When I say "ok", analyze using the rules above.`;

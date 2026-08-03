@@ -9,8 +9,13 @@ import {
 import type { PastTeam } from "@/lib/storage";
 import { authFetch } from "@/lib/authFetch";
 
-/** Merge two team arrays by ID with field-level conflict resolution. */
-function mergeTeams(base: Team[], other: Team[], baseIsLocal: boolean): Team[] {
+/**
+ * Merge two team arrays by ID with field-level conflict resolution.
+ * @param dropOtherOnly - if true, teams that exist ONLY in `other` are dropped
+ *   (used for owned tournaments where local deletions are intentional).
+ *   For shared tournaments, pass false to always keep all teams (union merge).
+ */
+function mergeTeams(base: Team[], other: Team[], dropOtherOnly: boolean): Team[] {
   const baseMap  = new Map(base.map(t => [t.id, t]));
   const otherMap = new Map(other.map(t => [t.id, t]));
   const result: Team[] = [];
@@ -19,7 +24,7 @@ function mergeTeams(base: Team[], other: Team[], baseIsLocal: boolean): Team[] {
     if (!o) { result.push(t); continue; }
     result.push({ ...o, ...t, phone: t.phone || o.phone || undefined, players: (t.players?.length ? t.players : o.players) ?? [] });
   }
-  if (!baseIsLocal) {
+  if (!dropOtherOnly) {
     for (const [id, t] of otherMap) {
       if (!baseMap.has(id)) result.push(t);
     }
@@ -119,14 +124,8 @@ export function useCloudSync(): SyncResult {
           const sRes = await fetch(`/api/share/${code}`);
           if (!sRes.ok) { sharedMerged.push(st); continue; }
           const { tournament: remote } = await sRes.json() as { tournament: Tournament };
-          const merged: Tournament = { ...remote, sharedFrom: code, teams: mergeTeams(st.teams ?? [], remote.teams ?? [], true) };
-          const { isActive: _ia, entryFee: _ef, ...sharePayload } = merged;
-          void _ia; void _ef;
-          await fetch(`/api/share/${code}`, {
-            method: "PUT", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ tournament: sharePayload }),
-          });
-          sharedMerged.push(merged);
+          // Shared = pure mirror of owner's data, no merge
+          sharedMerged.push({ ...remote, sharedFrom: code });
         } catch { sharedMerged.push(st); }
       }
 
@@ -149,6 +148,8 @@ export function useCloudSync(): SyncResult {
         const s = syncMap.get(id);
         if (!f) { ultimateMerged.push(s!); return; }
         if (!s) { ultimateMerged.push(f);  return; }
+        // Shared = always take synced (owner's) version
+        if (f.sharedFrom || s.sharedFrom) { ultimateMerged.push(s); return; }
         const freshNewer = (f.updatedAt ?? "") >= (s.updatedAt ?? "");
         const base  = freshNewer ? f : s;
         const other = freshNewer ? s : f;
@@ -235,6 +236,8 @@ export function useCloudSync(): SyncResult {
           const serverNewer = rTs >= lTs;
           const base  = serverNewer ? r! : l!;
           const other = serverNewer ? l! : r!;
+          // Shared = always take server (owner's) version as-is
+          if (r!.sharedFrom || l!.sharedFrom) { merged.push({ ...r!, sharedFrom: l!.sharedFrom || r!.sharedFrom }); return; }
           merged.push({ ...base, teams: mergeTeams(base.teams ?? [], other.teams ?? [], !serverNewer) });
         });
 

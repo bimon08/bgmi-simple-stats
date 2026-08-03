@@ -107,4 +107,5 @@ export interface Tournament {
     totalSlots?: number;          // Total final stage slots (auto-calculated)
   };
   waGroupLinks?: Record<string, string>;  // Per-group WA links keyed by label ("A", "B"...)
+  shareEditable?: boolean;                // Whether collaborators can edit (default true)
 }

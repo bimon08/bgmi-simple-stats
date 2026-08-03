@@ -26,11 +26,16 @@ export async function PUT(req: Request, { params }: { params: Promise<{ token: s
 
   if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  // Check if owner disabled editing
+  const stored = row.data as unknown as Tournament;
+  if (stored.shareEditable === false) {
+    return NextResponse.json({ error: "Editing disabled by owner" }, { status: 403 });
+  }
+
   const { tournament: incoming } = await req.json() as { tournament: Tournament };
   if (!incoming) return NextResponse.json({ error: "No data" }, { status: 400 });
 
   // Team-level union merge: preserve teams added by any collaborator
-  const stored = row.data as unknown as Tournament;
   const incomingTeamMap = new Map<string, Team>((incoming.teams ?? []).map(t => [t.id, t]));
   const storedTeamMap   = new Map<string, Team>((stored.teams   ?? []).map(t => [t.id, t]));
   const allTeamIds = new Set([...incomingTeamMap.keys(), ...storedTeamMap.keys()]);

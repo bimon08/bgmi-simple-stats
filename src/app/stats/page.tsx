@@ -37,7 +37,7 @@ export default function StatsPage() {
 
   const copyPrompt = () => {
     if (!tournament) return;
-    navigator.clipboard.writeText(generatePrompt(tournament.teams));
+    navigator.clipboard.writeText(generatePrompt(tournament.teams.filter(t => !t.out)));
     toast.success("Prompt copied! Paste in Gemini → upload screenshots → say \"ok\"");
   };
 
