@@ -8,9 +8,10 @@ type Theme = typeof standingsThemes[0];
 interface Props {
   renderCard: (theme: Theme, index: number) => ReactNode;
   activeRef?: React.RefObject<HTMLDivElement | null>;
+  align?: "center" | "start";
 }
 
-export default function ThemeCarousel({ renderCard, activeRef }: Props) {
+export default function ThemeCarousel({ renderCard, activeRef, align = "center" }: Props) {
   const [idx, setIdx] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -41,7 +42,7 @@ export default function ThemeCarousel({ renderCard, activeRef }: Props) {
   const currentTheme = standingsThemes[idx];
 
   return (
-    <div className="flex-1 flex flex-col justify-center overflow-hidden relative">
+    <div className={`flex-1 flex flex-col overflow-hidden relative ${align === "start" ? "justify-start" : "justify-center"}`}>
       {/* Arrows */}
       {idx > 0 && (
         <button onClick={() => scroll(-1)} className="absolute left-1 z-20 p-1.5 rounded-full bg-black/50 backdrop-blur-md border border-white/20 text-white/80 hover:text-white hover:bg-black/70 transition-all" style={{ top: "45%", transform: "translateY(-50%)" }}>
@@ -67,7 +68,7 @@ export default function ThemeCarousel({ renderCard, activeRef }: Props) {
       </div>
 
       {/* Theme name + dots */}
-      <div className="pt-2 pb-2 px-4">
+      <div className="pt-1.5 pb-0 px-4">
         <p className="text-center text-sm font-bold text-white mb-1.5">{currentTheme.name}</p>
         <div className="flex justify-center gap-1.5 flex-wrap">
           {standingsThemes.map((t, i) => (
