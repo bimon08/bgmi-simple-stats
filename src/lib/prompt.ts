@@ -8,110 +8,59 @@ export function generatePrompt(teams: Team[]): string {
   const hasTeams = teams.length > 0;
 
   const rosterSection = hasTeams
-    ? `\n═══════════════════════════════════════
-REGISTERED TEAMS (${teams.length} teams)
-Try to match scoreboard players to these rosters. Best-effort — partial matches are fine.
-Use the registered team name as the "group" value when you can identify the team.
-═══════════════════════════════════════
+    ? `\nREGISTERED TEAMS (${teams.length}):
 ${teams.map((t, i) => {
   const playerList = (t.players && t.players.length > 0)
-    ? `\n   Players: ${t.players.join(", ")}`
+    ? ` — Players: ${t.players.join(", ")}`
     : "";
   return `${i + 1}. ${t.name}${playerList}`;
 }).join("\n")}
 `
     : "";
 
-  return `I need you to extract stats from BGMI (Battlegrounds Mobile India) match scoreboard screenshots.
+  return `Extract BGMI scoreboard stats from screenshots I'll upload.
 
-I'll upload screenshots in batches (max 10 images per message). DO NOT analyze yet — just acknowledge each batch. When I say "ok", start the full analysis.
+Upload flow: I'll send screenshots in batches. Just acknowledge each batch. When I say "ok", analyze everything.
 ${rosterSection}
-═══════════════════════════════════════
-HOW TO READ BGMI SCOREBOARDS
-═══════════════════════════════════════
+BGMI SCOREBOARD LAYOUT:
+- LEFT PANEL: #1 (crown) and #2 (silver) teams with player rows showing "[Name] ... [N finishes]"
+- RIGHT PANEL: Positions #3–#14, each block has a position number + player rows
+- "N finishes" = N kills
+- Players in same position block = teammates (max 4)
+- Multiple screenshots per match (scrollable). Same #1 and #2 teams = same match.
 
-Each scoreboard has TWO panels:
+TASK:
+1. Group images by match (same #1/#2 = same match). Label M1, M2, M3…
+2. For each match, read every position block: position number, exact player names (keep Unicode/symbols), kills
+3. Match players to registered teams above. Unmatched → use letters A, B, C…
+4. NEVER merge two position blocks into one group. Each block = one group.
+5. Do NOT calculate points. Only output positions and kills.
 
-LEFT PANEL: Shows #1 and #2 teams
-  - #1 team has a CROWN icon, #2 has a silver medal
-  - Each player row: [PlayerName] ... [N finishes] or [N finish]
-  - "finishes" = kills. Read the NUMBER before "finishes"/"finish"
-
-RIGHT PANEL: Shows positions #3 through #14 (scrollable)
-  - Each position block: big number on left, then player rows
-  - Each player row: [PlayerName] ... [N finishes]
-
-MULTIPLE IMAGES per match: The scoreboard scrolls, so one match has 2-5 screenshots. Images showing the SAME #1 and #2 teams (same players, same kills) belong to the SAME match.
-
-Players in the SAME position block are TEAMMATES (max 4 per team).
-
-═══════════════════════════════════════
-YOUR TASK (when I say "ok")
-═══════════════════════════════════════
-
-STEP 1 — GROUP IMAGES BY MATCH
-Identify which images belong to the same match (same #1 and #2 teams = same match).
-Label them M1, M2, M3, M4 in the order you detect them.
-
-STEP 2 — READ EVERY POSITION GROUP
-For each match, read every position block (#1 through #14):
-  - Position number
-  - All player names EXACTLY as shown (keep all Unicode, symbols, foreign chars)
-  - Each player's kills (number before "finishes")
-
-STEP 3 — IDENTIFY TEAMS
-**CRITICAL: Each position block on screen = exactly ONE group in the JSON. NEVER merge two position blocks into one group.**
-Match the players you see on screen to the registered rosters above.
-- Some teams have a full player list — match any of those names
-- Some teams have only 1 name (the leader) — if that one name appears on screen, ALL players in that same position block belong to that team
-- If you cannot match any player in a position block to any registered team → use the next available letter (A, B, C …)
-- If players from two different position blocks seem similar, they are STILL TWO SEPARATE GROUPS — do NOT merge them
-Track recurring player groups across matches — same players = same team.
-
-**Do NOT calculate any points.** Only output raw positions and kills.
-The website will calculate placement points, kill points, totals, and rankings.
-
-═══════════════════════════════════════
-OUTPUT FORMAT — Return ONLY raw JSON (no markdown, no \`\`\`json fences, no explanation)
-═══════════════════════════════════════
+OUTPUT — raw JSON only (no markdown fences, no explanation):
 
 {
   "matches_detected": 4,
   "groups": [
     {
-      "group": "TSMent",
-      "players": ["ExactScreenName1", "ExactScreenName2", "ExactScreenName3"],
+      "group": "TeamName",
+      "players": ["Player1", "Player2"],
       "matches": [
         {
           "match": 1,
           "position": 1,
-          "playerKills": {
-            "ExactScreenName1": 5,
-            "ExactScreenName2": 3,
-            "ExactScreenName3": 2
-          }
+          "playerKills": { "Player1": 5, "Player2": 3 }
         }
       ]
     }
   ]
 }
 
-═══════════════════════════════════════
-IMPORTANT RULES
-═══════════════════════════════════════
+RULES:
+- One position block = one group entry. Never combine blocks.
+- Player names EXACTLY as on screen
+- "players" = union of all players seen across all matches for that group
+- Skip matches where a team doesn't appear
+- After JSON, on a new line: "Groups: X | Matches: Y" + list any unmatched teams
 
-- **ONE position block = ONE group. Never combine two blocks into one group entry.**
-- Do NOT include placementPoints, matchPoints, teamKills, totals, or rank in the output
-- Player names: EXACTLY as on screen — keep ALL Unicode, symbols, foreign chars
-- "N finishes" = N kills. Double-check — stylized font can be tricky
-- If a team doesn't appear in a match, skip that match entry for them
-- "players" = union of all players seen for that group across all matches
-- Don't skip any team or player visible in the screenshots
-- After the JSON on a NEW LINE, confirm:
-  Groups found: X | Matches detected: Y
-  Any teams you couldn't match to the roster? List them.
-- **CRITICAL: Output the JSON as raw text. Do NOT wrap it in markdown code fences (\`\`\`json). Just paste the raw { ... } object.**
-
-═══════════════════════════════════════
-I'll upload images now. When I say "ok", analyze using the rules above.`;
+I'll upload images now. Say "ok" when ready to analyze.`;
 }
