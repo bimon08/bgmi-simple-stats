@@ -7,7 +7,7 @@ import { GlobalMenu } from "@/components/global-menu";
 import { AuthProvider } from "@/components/auth-provider";
 
 export const metadata: Metadata = {
-  title: "ScoreCalc — Tournament Toolkit",
+  title: "ScrimCalc — Tournament Toolkit",
   description: "Free BGMI tournament points calculator, standings, warhead & fragger cards",
 };
 

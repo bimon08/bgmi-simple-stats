@@ -17,7 +17,7 @@ import { generatePrompt } from "@/lib/prompt";
 import { authFetch } from "@/lib/authFetch";
 import { normalizeGeminiData, uniquePlayers, autoAssignAndEnrich } from "@/lib/gemini";
 
-const APP_NAME = "ScoreCalc";
+const APP_NAME = "ScrimCalc";
 
 export default function TeamsPage() {
   const {

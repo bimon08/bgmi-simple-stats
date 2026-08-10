@@ -65,7 +65,7 @@ export function GlobalMenu() {
                 <Trophy className="h-4 w-4 text-white" />
               </div>
               <div className="flex-1">
-                <span className="text-sm font-black text-white">ScoreCalc</span>
+                <span className="text-sm font-black text-white">ScrimCalc</span>
                 <p className="text-[10px]" style={{ color: "rgba(167,139,250,0.5)" }}>Tournament Manager</p>
               </div>
               <button onClick={close} className="p-1.5 rounded-lg" style={{ color: "rgba(167,139,250,0.5)" }}>
@@ -100,7 +100,7 @@ export function GlobalMenu() {
 
             {/* Footer */}
             <div className="px-5 py-4" style={{ borderTop: "1px solid rgba(124,58,237,0.15)" }}>
-              <p className="text-[10px] text-center" style={{ color: "rgba(167,139,250,0.3)" }}>ScoreCalc · Tournament Toolkit</p>
+              <p className="text-[10px] text-center" style={{ color: "rgba(167,139,250,0.3)" }}>ScrimCalc · Tournament Toolkit</p>
             </div>
           </div>
 

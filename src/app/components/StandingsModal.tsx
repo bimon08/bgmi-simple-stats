@@ -9,7 +9,7 @@ import GroupFilterDropdown from "./GroupFilterDropdown";
 import ExportPopover from "./ExportPopover";
 import ThemeCarousel from "./ThemeCarousel";
 
-const APP_NAME = "ScoreCalc";
+const APP_NAME = "ScrimCalc";
 type Theme = typeof standingsThemes[0];
 type Format = "square" | "landscape";
 
