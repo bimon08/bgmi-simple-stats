@@ -9,9 +9,10 @@ interface Props {
   renderCard: (theme: Theme, index: number) => ReactNode;
   activeRef?: React.RefObject<HTMLDivElement | null>;
   align?: "center" | "start";
+  onActiveIndexChange?: (index: number) => void;
 }
 
-export default function ThemeCarousel({ renderCard, activeRef, align = "center" }: Props) {
+export default function ThemeCarousel({ renderCard, activeRef, align = "center", onActiveIndexChange }: Props) {
   const [idx, setIdx] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -25,12 +26,14 @@ export default function ThemeCarousel({ renderCard, activeRef, align = "center" 
   const onScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
     const cardW = el.firstElementChild?.clientWidth ?? 300;
-    const i = Math.round(el.scrollLeft / (cardW + 16));
-    setIdx(Math.max(0, Math.min(i, standingsThemes.length - 1)));
+    const i = Math.max(0, Math.min(Math.round(el.scrollLeft / (cardW + 16)), standingsThemes.length - 1));
+    setIdx(i);
+    onActiveIndexChange?.(i);
   };
 
   const jumpTo = (i: number) => {
     setIdx(i);
+    onActiveIndexChange?.(i);
     const el = scrollRef.current;
     if (el) {
       const cardW = el.firstElementChild?.clientWidth ?? 300;

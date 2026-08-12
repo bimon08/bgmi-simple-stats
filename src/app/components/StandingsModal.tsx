@@ -27,6 +27,8 @@ export default function StandingsModal({ tournament, standings, standingsTab, gr
   const activeIdxRef = useRef(0);
   const [format, setFormat] = useState<Format>("landscape");
 
+  const handleActiveIndexChange = (i: number) => { activeIdxRef.current = i; };
+
   // Group-aware filtering
   const filteredStandings = tournament.splitEnabled && groupFilter !== "all"
     ? standings.filter(row => { const team = tournament.teams.find(t => t.id === row.teamId); return team?.group === groupFilter; })
@@ -679,7 +681,7 @@ export default function StandingsModal({ tournament, standings, standingsTab, gr
         </div>
         <ExportPopover onShare={() => capture(false)} onDownload={() => capture(true)} />
       </div>
-      <ThemeCarousel renderCard={renderCard} />
+      <ThemeCarousel renderCard={renderCard} onActiveIndexChange={handleActiveIndexChange} />
       {/* Format toggle — below the preview */}
       <div className="shrink-0 flex items-center justify-center pt-2 pb-3">
         <div className="flex items-center rounded-xl overflow-hidden border border-white/10 bg-white/5">

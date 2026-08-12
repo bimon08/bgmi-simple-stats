@@ -26,6 +26,8 @@ export default function SlotsModal({ tournament, groupFilter, setGroupFilter, on
   const cardRef = useRef<HTMLDivElement>(null);
   const activeIdxRef = useRef(0);
 
+  const handleActiveIndexChange = (i: number) => { activeIdxRef.current = i; };
+
   const slotAssignments = (tournament.teams.filter(t => !t.out && (
     !tournament.splitEnabled || groupFilter === "all" || t.group === groupFilter
   ))).map((t, i) => ({ ...t, slot: startSlot + i }));
@@ -131,7 +133,7 @@ export default function SlotsModal({ tournament, groupFilter, setGroupFilter, on
           <ExportPopover onShare={() => capture(false)} onDownload={() => capture(true)} />
         </div>
       </div>
-      <ThemeCarousel renderCard={renderCard} />
+      <ThemeCarousel renderCard={renderCard} onActiveIndexChange={handleActiveIndexChange} />
       {/* Format toggle — below the preview */}
       <div className="shrink-0 flex items-center justify-center pt-2 pb-3">
         <div className="flex items-center rounded-xl overflow-hidden border border-white/10 bg-white/5">
