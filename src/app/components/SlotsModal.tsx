@@ -50,38 +50,33 @@ export default function SlotsModal({ tournament, groupFilter, setGroupFilter, on
     const isLandscape = format === "landscape";
     const total = slotAssignments.length;
 
-    // Square: 2 columns split in half; Landscape: 2 columns split in half (same data, wider card)
-    const perCol = Math.ceil(total / 2);
-    const cols = [slotAssignments.slice(0, perCol), slotAssignments.slice(perCol)].filter(c => c.length > 0);
+    // Max player columns across all teams, capped at 6
+    const maxPlayers = Math.min(
+      Math.max(...slotAssignments.map(s => (s.players ?? []).length), 0),
+      6
+    );
+    const hasRoster = maxPlayers > 0;
 
-    const fs = perCol > 12 ? "7px" : perCol > 9 ? "7.5px" : perCol > 7 ? "8px" : "9px";
-    const rankSize = perCol > 12 ? "11px" : perCol > 9 ? "12px" : perCol > 7 ? "14px" : "16px";
-    const rankFs = perCol > 12 ? "6px" : perCol > 9 ? "6.5px" : perCol > 7 ? "7px" : "8px";
-    const headerPad = perCol > 12 ? "1px 2px" : perCol > 9 ? "2px 3px" : "3px 4px";
-    const headerFs = perCol > 12 ? "5px" : perCol > 9 ? "5.5px" : "6px";
+    // Scale fonts with row count
+    const rowFs   = total > 20 ? "6px"   : total > 15 ? "6.5px" : total > 10 ? "7.5px" : total > 6 ? "8.5px"  : "9.5px";
+    const hdFs    = total > 20 ? "5.5px" : total > 15 ? "6px"   : total > 10 ? "6.5px" : "7px";
+    const rankSz  = total > 20 ? "12px"  : total > 15 ? "14px"  : total > 10 ? "16px"  : "18px";
+    const rankFs  = total > 20 ? "5.5px" : total > 15 ? "6px"   : total > 10 ? "7px"   : "8px";
+    const rowPad  = total > 20 ? "1px 3px" : total > 15 ? "1.5px 3px" : total > 10 ? "2px 4px" : "2.5px 4px";
+    const hdPad   = total > 15 ? "1.5px 0" : "2px 0";
 
     const cardStyle: React.CSSProperties = isLandscape
-      ? {
-          width: "calc(100vw - 48px)",
-          aspectRatio: "16/9",
-          scrollSnapAlign: "center",
-          borderRadius: "20px",
-          background: t.bg,
-          ...(t.bgImage ? { backgroundImage: `url(${t.bgImage})`, backgroundSize: "cover", backgroundPosition: "center" } : {}),
-        }
-      : {
-          width: "calc(100vw - 48px)",
-          aspectRatio: "1/1",
-          scrollSnapAlign: "center",
-          borderRadius: "20px",
-          background: t.bg,
-          ...(t.bgImage ? { backgroundImage: `url(${t.bgImage})`, backgroundSize: "cover", backgroundPosition: "center" } : {}),
-        };
+      ? { width: "calc(100vw - 48px)", aspectRatio: "16/9", scrollSnapAlign: "center", borderRadius: "20px", background: t.bg,
+          ...(t.bgImage ? { backgroundImage: `url(${t.bgImage})`, backgroundSize: "cover", backgroundPosition: "center" } : {}) }
+      : { width: "calc(100vw - 48px)", aspectRatio: "1/1",  scrollSnapAlign: "center", borderRadius: "20px", background: t.bg,
+          ...(t.bgImage ? { backgroundImage: `url(${t.bgImage})`, backgroundSize: "cover", backgroundPosition: "center" } : {}) };
 
     return (
       <div key={t.id} ref={cardIdx === activeIdxRef.current ? cardRef : undefined} className="shrink-0 relative overflow-hidden" style={cardStyle}>
         {t.overlay !== "none" && <div className="absolute inset-0" style={{ background: t.overlay, borderRadius: "20px" }} />}
         <div className="relative z-10 px-3 py-3 h-full flex flex-col">
+
+          {/* Title */}
           <div className="text-center mb-2">
             <h2 className="text-base font-bold tracking-wide" style={{ color: t.titleColor, textShadow: t.titleShadow }}>{tournament.name}</h2>
             <div className="mt-1 inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full" style={{ background: t.badgeBg, border: `1px solid ${t.badgeBorder}` }}>
@@ -93,29 +88,72 @@ export default function SlotsModal({ tournament, groupFilter, setGroupFilter, on
               </div>
             )}
           </div>
-          <div className="flex-1" style={{ display: "flex", gap: "6px" }}>
-            {cols.map((col, ci) => (
-              <div key={ci} className="flex-1 overflow-hidden flex flex-col" style={{ borderRadius: "8px", backgroundColor: t.tableBg, border: `1px solid ${t.tableBorder}` }}>
-                <div style={{ backgroundColor: t.headerBg, borderBottom: `1px solid ${t.headerBorder}`, padding: headerPad, display: "flex", alignItems: "center" }}>
-                  <span style={{ width: "20px", fontSize: headerFs, fontWeight: 800, textTransform: "uppercase", textAlign: "center", color: t.headerText }}>Slot</span>
-                  <span style={{ flex: 1, fontSize: headerFs, fontWeight: 800, textTransform: "uppercase", color: t.headerText }}>Team</span>
-                 </div>
-                {col.map((s, idx) => (
-                  <div key={s.id} className="flex items-center flex-1" style={{ padding: "0 3px", borderBottom: `1px solid ${t.rowBorder}`, background: idx % 2 === 0 ? t.rowEven : t.rowOdd }}>
-                    <span className="inline-flex items-center justify-center rounded font-black" style={{ width: rankSize, height: rankSize, fontSize: rankFs, flexShrink: 0, marginRight: "3px", background: t.rankDefault, color: t.rankDefaultText }}>{s.slot}</span>
-                    <span style={{ flex: 1, color: t.cellText, fontSize: fs, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden" }}>
-                      {isLandscape ? s.name : s.name.slice(0, 7)}
-                    </span>
+
+          {/* Table — single-column bimon style */}
+          <div className="flex-1 overflow-hidden flex flex-col" style={{ borderRadius: "8px", backgroundColor: t.tableBg, border: `1px solid ${t.tableBorder}` }}>
+
+            {/* Header row */}
+            <div style={{ display: "flex", alignItems: "center", backgroundColor: t.headerBg, borderBottom: `1px solid ${t.headerBorder}`, padding: hdPad, flexShrink: 0 }}>
+              <div style={{ width: "26px", flexShrink: 0, textAlign: "center", fontSize: hdFs, fontWeight: 800, textTransform: "uppercase", color: t.headerText }}>Slot</div>
+              <div style={{ flex: hasRoster ? "0 0 28%" : "1", minWidth: 0, fontSize: hdFs, fontWeight: 800, textTransform: "uppercase", color: t.headerText, paddingLeft: "4px" }}>Team</div>
+              {hasRoster && Array.from({ length: maxPlayers }, (_, i) => (
+                <div key={i} style={{ flex: 1, minWidth: 0, textAlign: "center", fontSize: hdFs, fontWeight: 800, textTransform: "uppercase", color: t.headerText }}>P{i + 1}</div>
+              ))}
+            </div>
+
+            {/* Data rows */}
+            <div className="flex-1 flex flex-col overflow-hidden">
+              {slotAssignments.map((s, rowIdx) => {
+                const players = (s.players ?? []).slice(0, 6);
+                const padded  = [...players, ...Array(maxPlayers - players.length).fill("")];
+                // 3-cycle alternating colours matching bimon (neutral / sky / amber)
+                const cycle = rowIdx % 3;
+                const rowBg = cycle === 0
+                  ? (rowIdx % 2 === 0 ? t.rowEven : t.rowOdd)
+                  : cycle === 1 ? "rgba(56,189,248,0.07)"
+                               : "rgba(251,191,36,0.06)";
+
+                return (
+                  <div key={s.id} className="flex items-center flex-1" style={{ background: rowBg, borderBottom: `1px solid ${t.rowBorder}`, padding: rowPad, minHeight: 0 }}>
+                    {/* Slot badge */}
+                    <div style={{ width: "26px", flexShrink: 0, display: "flex", justifyContent: "center" }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: rankSz, height: rankSz, borderRadius: "4px", fontSize: rankFs, fontWeight: 900, background: t.rankDefault, color: t.rankDefaultText, flexShrink: 0 }}>
+                        {s.slot}
+                      </span>
+                    </div>
+                    {/* Team name */}
+                    <div style={{ flex: hasRoster ? "0 0 28%" : "1", minWidth: 0, paddingLeft: "4px", paddingRight: "2px" }}>
+                      <span style={{ display: "block", fontSize: rowFs, fontWeight: 700, color: t.cellText, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {s.name}
+                      </span>
+                    </div>
+                    {/* Player columns */}
+                    {hasRoster && padded.map((p, pi) => (
+                      <div key={pi} style={{ flex: 1, minWidth: 0, textAlign: "center", padding: "0 2px" }}>
+                        <span style={{ display: "block", fontSize: rowFs, fontWeight: 600, color: p ? (t.legendText ?? t.cellText) : t.rowBorder, opacity: p ? 0.9 : 0.4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {p || "—"}
+                        </span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            ))}
+                );
+              })}
+            </div>
           </div>
-          <div className="mt-2 flex items-center justify-center gap-2 text-[9px]"><div className="h-px w-6" style={{ background: `linear-gradient(to right,transparent,${t.footerAccent})` }} /><span className="font-medium" style={{ color: t.footerText }}>{APP_NAME}</span><div className="h-px w-6" style={{ background: `linear-gradient(to left,transparent,${t.footerAccent})` }} /></div>
+
+          {/* Footer */}
+          <div className="mt-2 flex items-center justify-center gap-2 text-[9px]">
+            <div className="h-px w-6" style={{ background: `linear-gradient(to right,transparent,${t.footerAccent})` }} />
+            <span className="font-medium" style={{ color: t.footerText }}>{APP_NAME}</span>
+            <div className="h-px w-6" style={{ background: `linear-gradient(to left,transparent,${t.footerAccent})` }} />
+          </div>
         </div>
       </div>
     );
   };
+
+
+
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col" style={{ background: "#0a0a0a" }}>
