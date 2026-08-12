@@ -68,7 +68,7 @@ export default function MainView({
       {/* HEADER */}
       <div className="pt-6 pb-6 text-center px-4 anim-slide-up">
         <p className="text-2xl mb-0.5" style={{ fontFamily: "'Dancing Script', cursive", color: "#c4b5fd" }}>Welcome to</p>
-        <h1 className="text-4xl font-black text-white tracking-tight">{appName}</h1>
+        <h1 className="text-4xl font-black text-white tracking-tight" suppressHydrationWarning>{appName}</h1>
       </div>
 
       <div className="px-4 space-y-6 max-w-md mx-auto">

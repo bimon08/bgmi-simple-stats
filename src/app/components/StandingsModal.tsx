@@ -404,6 +404,7 @@ export default function StandingsModal({ tournament, standings, standingsTab, gr
 
   const renderCard = (t: Theme, cardIdx: number) => {
     const isLandscape = format === "landscape";
+    const sqAspect    = "1/1"; // always 1:1 for non-landscape (square)
     const borderDecor = t.layout === "accent-bar" ? { borderLeft: `5px solid ${t.accentColor}` } : t.layout === "bold" ? { border: `3px solid ${t.accentColor}30` } : {};
 
     // ── SQUARE: per-layout card structure ──
@@ -419,7 +420,7 @@ export default function StandingsModal({ tournament, standings, standingsTab, gr
 
       // ── BANNER: prominent accent top-bar containing title ──
       if (t.layout === "banner") return (
-        <div key={t.id} ref={cardIdx === activeIdxRef.current ? cardRef : undefined} className="shrink-0 relative overflow-hidden" style={{ width: "calc(100vw - 48px)", aspectRatio: "1/1", scrollSnapAlign: "center", borderRadius: "20px", background: t.bg, ...(t.bgImage ? { backgroundImage: `url(${t.bgImage})`, backgroundSize: "cover", backgroundPosition: "center" } : {}) }}>
+        <div key={t.id} ref={cardIdx === activeIdxRef.current ? cardRef : undefined} className="shrink-0 relative overflow-hidden" style={{ width: "calc(100vw - 48px)", aspectRatio: sqAspect, scrollSnapAlign: "center", borderRadius: "20px", background: t.bg, ...(t.bgImage ? { backgroundImage: `url(${t.bgImage})`, backgroundSize: "cover", backgroundPosition: "center" } : {}) }}>
           {t.overlay !== "none" && <div className="absolute inset-0" style={{ background: t.overlay }} />}
           <div className="relative z-10 h-full flex flex-col">
             {/* Accent top bar — the defining feature of banner layout */}
@@ -435,7 +436,7 @@ export default function StandingsModal({ tournament, standings, standingsTab, gr
 
       // ── SPLIT: vertical sidebar title on the left ──
       if (t.layout === "split") return (
-        <div key={t.id} ref={cardIdx === activeIdxRef.current ? cardRef : undefined} className="shrink-0 relative overflow-hidden" style={{ width: "calc(100vw - 48px)", aspectRatio: "1/1", scrollSnapAlign: "center", borderRadius: "20px", background: t.bg, ...(t.bgImage ? { backgroundImage: `url(${t.bgImage})`, backgroundSize: "cover", backgroundPosition: "center" } : {}) }}>
+        <div key={t.id} ref={cardIdx === activeIdxRef.current ? cardRef : undefined} className="shrink-0 relative overflow-hidden" style={{ width: "calc(100vw - 48px)", aspectRatio: sqAspect, scrollSnapAlign: "center", borderRadius: "20px", background: t.bg, ...(t.bgImage ? { backgroundImage: `url(${t.bgImage})`, backgroundSize: "cover", backgroundPosition: "center" } : {}) }}>
           {t.overlay !== "none" && <div className="absolute inset-0" style={{ background: t.overlay }} />}
           <div className="relative z-10 h-full" style={{ display: "flex" }}>
             {/* Left sidebar with vertical title */}
@@ -458,7 +459,7 @@ export default function StandingsModal({ tournament, standings, standingsTab, gr
 
       // ── BOLD: large centered title + accent divider ──
       if (t.layout === "bold") return (
-        <div key={t.id} ref={cardIdx === activeIdxRef.current ? cardRef : undefined} className="shrink-0 relative overflow-hidden" style={{ width: "calc(100vw - 48px)", aspectRatio: "1/1", scrollSnapAlign: "center", borderRadius: "24px", background: t.bg, border: `3px solid ${ac}40`, ...(t.bgImage ? { backgroundImage: `url(${t.bgImage})`, backgroundSize: "cover", backgroundPosition: "center" } : {}) }}>
+        <div key={t.id} ref={cardIdx === activeIdxRef.current ? cardRef : undefined} className="shrink-0 relative overflow-hidden" style={{ width: "calc(100vw - 48px)", aspectRatio: sqAspect, scrollSnapAlign: "center", borderRadius: "24px", background: t.bg, border: `3px solid ${ac}40`, ...(t.bgImage ? { backgroundImage: `url(${t.bgImage})`, backgroundSize: "cover", backgroundPosition: "center" } : {}) }}>
           {t.overlay !== "none" && <div className="absolute inset-0" style={{ background: t.overlay, borderRadius: "20px" }} />}
           <div className="relative z-10 h-full flex flex-col px-4">
             {/* Large title block */}
@@ -478,7 +479,7 @@ export default function StandingsModal({ tournament, standings, standingsTab, gr
 
       // ── MINIMAL: floating text, no box, airy layout ──
       if (t.layout === "minimal") return (
-        <div key={t.id} ref={cardIdx === activeIdxRef.current ? cardRef : undefined} className="shrink-0 relative overflow-hidden" style={{ width: "calc(100vw - 48px)", aspectRatio: "1/1", scrollSnapAlign: "center", borderRadius: "20px", background: t.bg, ...(t.bgImage ? { backgroundImage: `url(${t.bgImage})`, backgroundSize: "cover", backgroundPosition: "center" } : {}) }}>
+        <div key={t.id} ref={cardIdx === activeIdxRef.current ? cardRef : undefined} className="shrink-0 relative overflow-hidden" style={{ width: "calc(100vw - 48px)", aspectRatio: sqAspect, scrollSnapAlign: "center", borderRadius: "20px", background: t.bg, ...(t.bgImage ? { backgroundImage: `url(${t.bgImage})`, backgroundSize: "cover", backgroundPosition: "center" } : {}) }}>
           {t.overlay !== "none" && <div className="absolute inset-0" style={{ background: t.overlay }} />}
           <div className="relative z-10 h-full flex flex-col" style={{ padding: "14px 14px 10px" }}>
             <div style={{ flexShrink: 0, marginBottom: "8px" }}>
@@ -494,7 +495,7 @@ export default function StandingsModal({ tournament, standings, standingsTab, gr
 
       // ── ACCENT-BAR: full-card accent gradient tint, pill title ──
       if (t.layout === "accent-bar") return (
-        <div key={t.id} ref={cardIdx === activeIdxRef.current ? cardRef : undefined} className="shrink-0 relative overflow-hidden" style={{ width: "calc(100vw - 48px)", aspectRatio: "1/1", scrollSnapAlign: "center", borderRadius: "20px", background: t.bg, borderLeft: `6px solid ${ac}`, ...(t.bgImage ? { backgroundImage: `url(${t.bgImage})`, backgroundSize: "cover", backgroundPosition: "center" } : {}) }}>
+        <div key={t.id} ref={cardIdx === activeIdxRef.current ? cardRef : undefined} className="shrink-0 relative overflow-hidden" style={{ width: "calc(100vw - 48px)", aspectRatio: sqAspect, scrollSnapAlign: "center", borderRadius: "20px", background: t.bg, borderLeft: `6px solid ${ac}`, ...(t.bgImage ? { backgroundImage: `url(${t.bgImage})`, backgroundSize: "cover", backgroundPosition: "center" } : {}) }}>
           {t.overlay !== "none" && <div className="absolute inset-0" style={{ background: t.overlay }} />}
           {/* Full-card left-to-right accent tint */}
           <div className="absolute inset-0" style={{ background: `linear-gradient(90deg,${ac}20 0%,${ac}06 40%,transparent 100%)` }} />
@@ -513,7 +514,7 @@ export default function StandingsModal({ tournament, standings, standingsTab, gr
 
       // ── COMPACT: dense terminal — inline title + count ──
       if (t.layout === "compact") return (
-        <div key={t.id} ref={cardIdx === activeIdxRef.current ? cardRef : undefined} className="shrink-0 relative overflow-hidden" style={{ width: "calc(100vw - 48px)", aspectRatio: "1/1", scrollSnapAlign: "center", borderRadius: "12px", background: t.bg, border: `1px solid ${ac}25`, ...(t.bgImage ? { backgroundImage: `url(${t.bgImage})`, backgroundSize: "cover", backgroundPosition: "center" } : {}) }}>
+        <div key={t.id} ref={cardIdx === activeIdxRef.current ? cardRef : undefined} className="shrink-0 relative overflow-hidden" style={{ width: "calc(100vw - 48px)", aspectRatio: sqAspect, scrollSnapAlign: "center", borderRadius: "12px", background: t.bg, border: `1px solid ${ac}25`, ...(t.bgImage ? { backgroundImage: `url(${t.bgImage})`, backgroundSize: "cover", backgroundPosition: "center" } : {}) }}>
           {t.overlay !== "none" && <div className="absolute inset-0" style={{ background: t.overlay }} />}
           <div className="relative z-10 h-full flex flex-col" style={{ padding: "8px 10px" }}>
             {/* Dense title row */}
@@ -534,7 +535,7 @@ export default function StandingsModal({ tournament, standings, standingsTab, gr
 
       // ── DEFAULT: standard glass card ──
       return (
-        <div key={t.id} ref={cardIdx === activeIdxRef.current ? cardRef : undefined} className="shrink-0 relative overflow-hidden" style={{ width: "calc(100vw - 48px)", aspectRatio: "1/1", scrollSnapAlign: "center", borderRadius: "20px", background: t.bg, ...(t.bgImage ? { backgroundImage: `url(${t.bgImage})`, backgroundSize: "cover", backgroundPosition: "center" } : {}) }}>
+        <div key={t.id} ref={cardIdx === activeIdxRef.current ? cardRef : undefined} className="shrink-0 relative overflow-hidden" style={{ width: "calc(100vw - 48px)", aspectRatio: sqAspect, scrollSnapAlign: "center", borderRadius: "20px", background: t.bg, ...(t.bgImage ? { backgroundImage: `url(${t.bgImage})`, backgroundSize: "cover", backgroundPosition: "center" } : {}) }}>
           {t.overlay !== "none" && <div className="absolute inset-0" style={{ background: t.overlay, borderRadius: "20px" }} />}
           <div className="relative z-10 px-3 py-3 h-full flex flex-col">
             {renderTitle(t)}
@@ -679,39 +680,9 @@ export default function StandingsModal({ tournament, standings, standingsTab, gr
           <p className="text-xs font-bold tracking-widest text-white/30">STANDINGS</p>
           {tournament.splitEnabled && <GroupFilterDropdown value={groupFilter} onChange={setGroupFilter} groupCount={tournament.groupCount ?? 2} showFinal={tournament.teams.some(t => t.group === "final")} />}
         </div>
-        <ExportPopover onShare={() => capture(false)} onDownload={() => capture(true)} />
+        <ExportPopover onShare={() => capture(false)} onDownload={() => capture(true)} format={format} onFormatChange={setFormat} />
       </div>
       <ThemeCarousel renderCard={renderCard} onActiveIndexChange={handleActiveIndexChange} />
-      {/* Format toggle — below the preview */}
-      <div className="shrink-0 flex items-center justify-center pt-2 pb-3">
-        <div className="flex items-center rounded-xl overflow-hidden border border-white/10 bg-white/5">
-          <button
-            onClick={() => setFormat("square")}
-            title="Square (1:1)"
-            className={`flex items-center gap-2 px-4 py-2 text-[11px] font-bold transition-all border-r border-white/10 ${
-              format === "square" ? "bg-amber-500/25 text-amber-400" : "text-white/40 hover:text-white/70"
-            }`}
-          >
-            <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
-              <rect x="1" y="1" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="1.5" />
-            </svg>
-            Square
-          </button>
-          <button
-            onClick={() => setFormat("landscape")}
-            title="Landscape (16:9)"
-            className={`flex items-center gap-2 px-4 py-2 text-[11px] font-bold transition-all ${
-              format === "landscape" ? "bg-amber-500/25 text-amber-400" : "text-white/40 hover:text-white/70"
-            }`}
-          >
-            <svg width="18" height="12" viewBox="0 0 18 12" fill="none">
-              <rect x="1" y="1" width="16" height="10" rx="2" stroke="currentColor" strokeWidth="1.5" />
-              <line x1="9" y1="1" x2="9" y2="11" stroke="currentColor" strokeWidth="1" strokeDasharray="2 1.5" />
-            </svg>
-            Landscape
-          </button>
-        </div>
-      </div>
     </div>
   );
 }

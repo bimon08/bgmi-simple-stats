@@ -1,16 +1,18 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Check } from "lucide-react";
 import { groupLabels } from "@/lib/groups";
 
 interface Props {
-  value: string;  // "all" | "A" | "B" | "C" ... | "final"
+  value: string;
   onChange: (v: string) => void;
   groupCount: number;
   showFinal?: boolean;
+  /** Optional accent colour from the active theme */
+  accentColor?: string;
 }
 
-export default function GroupFilterDropdown({ value, onChange, groupCount, showFinal }: Props) {
+export default function GroupFilterDropdown({ value, onChange, groupCount, showFinal, accentColor = "#f97316" }: Props) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -34,33 +36,45 @@ export default function GroupFilterDropdown({ value, onChange, groupCount, showF
 
   return (
     <div ref={ref} className="relative">
+      {/* Trigger — same glass pill as the three-dot button */}
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-lg press-scale"
-        style={{ background: "rgba(124,58,237,0.15)", border: "1px solid rgba(124,58,237,0.25)", color: "#c4b5fd" }}
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-black/60 backdrop-blur border border-white/20 text-white/80 hover:text-white transition-all text-[11px] font-bold"
       >
         {current.label}
-        <ChevronDown className="h-3 w-3" style={{ opacity: 0.5, transform: open ? "rotate(180deg)" : "none", transition: "transform 150ms" }} />
+        <ChevronDown
+          className="h-3 w-3 text-white/50 transition-transform duration-150"
+          style={{ transform: open ? "rotate(180deg)" : "none" }}
+        />
       </button>
 
+      {/* Dropdown — matches three-dot menu exactly */}
       {open && (
         <div
-          className="absolute left-0 top-full mt-1 z-30 rounded-xl overflow-hidden anim-fade-in min-w-[120px]"
-          style={{ background: "#110b1e", border: "1px solid rgba(124,58,237,0.18)", boxShadow: "0 8px 32px rgba(0,0,0,0.8)" }}
+          className="absolute left-1/2 -translate-x-1/2 top-full mt-1.5 z-30 rounded-2xl overflow-hidden min-w-[140px]"
+          style={{
+            background: "rgba(0,0,0,0.82)",
+            border: "1px solid rgba(255,255,255,0.13)",
+            boxShadow: "0 16px 40px rgba(0,0,0,0.7)",
+            backdropFilter: "blur(20px)",
+          }}
         >
-          {options.map(opt => (
-            <button
-              key={opt.key}
-              onClick={() => { onChange(opt.key); setOpen(false); }}
-              className="flex items-center gap-2 w-full px-3.5 py-2.5 text-left text-xs font-medium transition-colors"
-              style={{
-                color: value === opt.key ? "#c4b5fd" : "rgba(255,255,255,0.6)",
-                background: value === opt.key ? "rgba(124,58,237,0.2)" : "transparent",
-              }}
-            >
-              {opt.label}
-            </button>
-          ))}
+          {options.map((opt, i) => {
+            const isSelected = value === opt.key;
+            return (
+              <button
+                key={opt.key}
+                onClick={() => { onChange(opt.key); setOpen(false); }}
+                className={`flex items-center justify-between w-full px-4 py-3 text-sm font-semibold transition-colors hover:bg-white/10 ${i < options.length - 1 ? "border-b border-white/[0.07]" : ""}`}
+                style={{ color: isSelected ? accentColor : "rgba(255,255,255,0.75)" }}
+              >
+                {opt.label}
+                {isSelected && (
+                  <Check className="h-3.5 w-3.5 shrink-0" strokeWidth={3} />
+                )}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
