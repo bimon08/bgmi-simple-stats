@@ -23,6 +23,7 @@ interface Props {
 export default function SlotsModal({ tournament, groupFilter, setGroupFilter, onClose }: Props) {
   const [startSlot, setStartSlot] = useState(3);
   const [format, setFormat] = useState<Format>("square");
+  const [showRoster, setShowRoster] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
   const activeIdxRef = useRef(0);
 
@@ -55,7 +56,7 @@ export default function SlotsModal({ tournament, groupFilter, setGroupFilter, on
       Math.max(...slotAssignments.map(s => (s.players ?? []).length), 0),
       6
     );
-    const hasRoster = maxPlayers > 0;
+    const hasRoster = showRoster && maxPlayers > 0;
 
     // Scale fonts with row count
     const rowFs   = total > 20 ? "6px"   : total > 15 ? "6.5px" : total > 10 ? "7.5px" : total > 6 ? "8.5px"  : "9.5px";
@@ -168,8 +169,25 @@ export default function SlotsModal({ tournament, groupFilter, setGroupFilter, on
             <span className="text-[10px] text-white/50">Start</span>
             <input type="number" value={startSlot} onChange={(e) => setStartSlot(Math.max(1, parseInt(e.target.value) || 1))} className="w-8 bg-transparent text-xs text-white text-center focus:outline-none" min={1} />
           </div>
+          {/* Roster toggle */}
+          <button
+            onClick={() => setShowRoster(v => !v)}
+            title={showRoster ? "Hide roster" : "Show roster"}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-all ${
+              showRoster
+                ? "bg-amber-500/20 border-amber-500/40 text-amber-400"
+                : "bg-white/5 border-white/10 text-white/40 hover:text-white/70"
+            }`}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+            Roster
+          </button>
           <ExportPopover onShare={() => capture(false)} onDownload={() => capture(true)} />
         </div>
+
       </div>
       <ThemeCarousel renderCard={renderCard} onActiveIndexChange={handleActiveIndexChange} />
       {/* Format toggle — below the preview */}
