@@ -571,6 +571,7 @@ export default function TeamsPage() {
           save={save}
           onClose={() => closeOverlay(() => setShowEdit(false))}
           onEditTeams={() => {
+            setShowEdit(false);
             setAddForm({ name: "", tags: "", phone: "" });
             setPlayerInputs([""]);
             setAddScreenTab("entered"); // open on Entered so user sees all teams + can toggle booked/not
@@ -580,10 +581,11 @@ export default function TeamsPage() {
             setShowAddScreen(true);
           }}
           onOpenPointSystem={() => {
+            setShowEdit(false);
             setEditingPoints(tournament.pointSystem ?? DEFAULT_BGMI_POINTS);
             setShowPointSystem(true);
           }}
-          onOpenAdvanced={() => { setShowAdvanced(true); }}
+          onOpenAdvanced={() => { setShowEdit(false); setShowAdvanced(true); }}
           onDelete={handleDeleteTournament}
         />
       )}

@@ -27,11 +27,11 @@ export default function EditSheet({
     },
     {
       icon: <UserPlus className="h-5 w-5" />, label: "Edit teams",
-      action: () => { onClose(); onEditTeams(); }
+      action: () => { onEditTeams(); }
     },
     {
       icon: <Pencil className="h-5 w-5" />, label: "Change point system",
-      action: () => { onClose(); onOpenPointSystem(); }
+      action: () => { onOpenPointSystem(); }
     },
     {
       icon: <ListX className="h-5 w-5" />, label: "Delete Points by match",
@@ -43,7 +43,7 @@ export default function EditSheet({
     },
     {
       icon: <SlidersHorizontal className="h-5 w-5" />, label: "Advanced",
-      action: () => { onClose(); onOpenAdvanced(); }
+      action: () => { onOpenAdvanced(); }
     },
     {
       icon: <Trash2 className="h-5 w-5" />, label: "Delete tournament", danger: true,
