@@ -77,7 +77,12 @@ export default function TeamsPage() {
   const [showSplit, setShowSplit] = useState(false);
   const [groupFilter, setGroupFilter] = useState<string>("all");
 
-  // Native back-button: push a history entry whenever any overlay opens, pop to close the top-most one
+  // Tracks whether we've pushed a history entry for the current overlay session.
+  // We only ever want ONE entry pushed per session so one back-press closes it.
+  const overlayPushed = useRef(false);
+
+  // Back-button: push exactly ONE history entry when any overlay opens.
+  // One back-press closes the top-most overlay; does NOT exit the website.
   useEffect(() => {
     const anyOpen =
       showCreate || showAddScreen || !!editingTeam ||
@@ -85,14 +90,22 @@ export default function TeamsPage() {
       showPointSystem || showEdit ||
       showAdvanced || showSplit;
 
-    if (anyOpen) {
-      history.pushState({ overlay: true }, '');
+    if (anyOpen && !overlayPushed.current) {
+      // Push with a hash so the URL changes and the system back button
+      // is guaranteed to fire popstate instead of leaving the page.
+      history.pushState({ overlay: true }, '', '#');
+      overlayPushed.current = true;
+    } else if (!anyOpen && overlayPushed.current) {
+      // All overlays closed — clean the hash without adding a history entry
+      history.replaceState({}, '', window.location.pathname + window.location.search);
+      overlayPushed.current = false;
     }
 
     const onPop = () => {
+      overlayPushed.current = false;
       // Close in reverse-depth order (deepest first)
-      if (showSplit)     { setShowSplit(false); return; }
-      if (showAdvanced)  { setShowAdvanced(false); return; }
+      if (showSplit)      { setShowSplit(false); return; }
+      if (showAdvanced)   { setShowAdvanced(false); return; }
       if (editingTeam)    { setEditingTeam(null); return; }
       if (showStats)      { setShowStats(false); return; }
       if (showStandings)  { setShowStandings(false); return; }
@@ -100,7 +113,6 @@ export default function TeamsPage() {
       if (showPointSystem){ setShowPointSystem(false); return; }
       if (showAddScreen)  { setShowAddScreen(false); return; }
       if (showEdit)       { setShowEdit(false); return; }
-
       if (showCreate)     { setShowCreate(false); setCreateName(''); setRoundRobin(false); return; }
     };
 
@@ -108,6 +120,19 @@ export default function TeamsPage() {
     return () => window.removeEventListener('popstate', onPop);
   }, [showCreate, showAddScreen, editingTeam, showStats, showStandings,
       showSlots, showPointSystem, showEdit, showAdvanced, showSplit]);
+
+  /**
+   * Close an overlay via the close BUTTON.
+   * Calls the closer, then calls history.back() to consume the pushed entry
+   * so the history stack stays clean.
+   */
+  const closeOverlay = (closer: () => void) => {
+    closer();
+    if (overlayPushed.current) {
+      overlayPushed.current = false;
+      history.back();
+    }
+  };
 
   const recomputeStandings = (t: Tournament) => setStandings(computeStandingsFromTournament(t));
 
@@ -414,7 +439,7 @@ export default function TeamsPage() {
           setCreateName={setCreateName}
           roundRobin={roundRobin}
           setRoundRobin={setRoundRobin}
-          onClose={() => { setShowCreate(false); setCreateName(""); setRoundRobin(false); }}
+          onClose={() => closeOverlay(() => { setShowCreate(false); setCreateName(""); setRoundRobin(false); })}
           onCreate={handleCreate}
           onClone={handleCloneCreate}
         />
@@ -520,7 +545,7 @@ export default function TeamsPage() {
           setEditingPlayerIdx={setEditingPlayerIdx}
           save={save}
           onSave={saveEditTeam}
-          onClose={() => { setEditingTeam(null); setShowTeamDetails(false); }}
+          onClose={() => closeOverlay(() => { setEditingTeam(null); setShowTeamDetails(false); })}
         />
       )}
 
@@ -535,7 +560,7 @@ export default function TeamsPage() {
           showMorePositions={showMorePositions}
           setShowMorePositions={setShowMorePositions}
           save={save}
-          onClose={() => setShowPointSystem(false)}
+          onClose={() => closeOverlay(() => setShowPointSystem(false))}
         />
       )}
 
@@ -544,7 +569,7 @@ export default function TeamsPage() {
         <EditSheet
           tournament={tournament}
           save={save}
-          onClose={() => { setShowEdit(false); }}
+          onClose={() => closeOverlay(() => setShowEdit(false))}
           onEditTeams={() => {
             setAddForm({ name: "", tags: "", phone: "" });
             setPlayerInputs([""]);
@@ -569,7 +594,7 @@ export default function TeamsPage() {
           tournament={tournament}
           standings={standings}
           save={save}
-          onClose={() => setShowAdvanced(false)}
+          onClose={() => closeOverlay(() => setShowAdvanced(false))}
           onOpenSplit={() => { setShowAdvanced(false); setShowSplit(true); }}
         />
       )}
@@ -579,7 +604,7 @@ export default function TeamsPage() {
         <SplitScreen
           tournament={tournament}
           save={save}
-          onClose={() => setShowSplit(false)}
+          onClose={() => closeOverlay(() => setShowSplit(false))}
         />
       )}
 
@@ -603,18 +628,18 @@ export default function TeamsPage() {
             save(updated); setGroups([]); setAssignments({}); setMatchesDetected(0); setStandings([]);
             toast.success("Match data cleared");
           }}
-          onClose={() => setShowStats(false)}
+          onClose={() => closeOverlay(() => setShowStats(false))}
         />
       )}
 
       {/* SLOTS MODAL */}
       {showSlots && tournament && (
-        <SlotsModal tournament={tournament} groupFilter={groupFilter} setGroupFilter={setGroupFilter} onClose={() => setShowSlots(false)} />
+        <SlotsModal tournament={tournament} groupFilter={groupFilter} setGroupFilter={setGroupFilter} onClose={() => closeOverlay(() => setShowSlots(false))} />
       )}
 
       {/* STANDINGS MODAL */}
       {showStandings && tournament && (
-        <StandingsModal tournament={tournament} standings={standings} standingsTab={standingsTab} groupFilter={groupFilter} setGroupFilter={setGroupFilter} onClose={() => setShowStandings(false)} />
+        <StandingsModal tournament={tournament} standings={standings} standingsTab={standingsTab} groupFilter={groupFilter} setGroupFilter={setGroupFilter} onClose={() => closeOverlay(() => setShowStandings(false))} />
       )}
 
       {/* SHARE CODE MODAL */}

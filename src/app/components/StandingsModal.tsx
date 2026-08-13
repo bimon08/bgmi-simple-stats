@@ -59,7 +59,7 @@ export default function StandingsModal({ tournament, standings, standingsTab, gr
       if (download) { const a = document.createElement("a"); a.download = `${tournament.name}-${standingsTab}.jpg`; a.href = dataUrl; a.click(); toast.success("Downloaded!"); return; }
       const res = await fetch(dataUrl); const blob = await res.blob();
       const file = new File([blob], `${tournament.name}-${standingsTab}.jpg`, { type: "image/jpeg" });
-      if (navigator.share && navigator.canShare?.({ files: [file] })) await navigator.share({ files: [file] });
+      if (navigator.share && navigator.canShare?.({ files: [file] })) await navigator.share({ files: [file], title: tournament.name || "Standings" });
       else if (navigator.clipboard && window.ClipboardItem) { await navigator.clipboard.write([new ClipboardItem({ "image/jpeg": blob })]); toast.success("Copied!"); }
       else { const a = document.createElement("a"); a.download = `${tournament.name}-${standingsTab}.jpg`; a.href = dataUrl; a.click(); }
     } catch (err: unknown) { if ((err as Error).name !== "AbortError") toast.error("Failed"); }

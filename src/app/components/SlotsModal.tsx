@@ -152,7 +152,7 @@ export default function SlotsModal({ tournament, groupFilter, setGroupFilter, on
       const blob = await (await fetch(dataUrl)).blob();
       const file = new File([blob], `${tournament.name || "slots"}.jpg`, { type: "image/jpeg" });
       if (navigator.share && navigator.canShare?.({ files: [file] })) {
-        await navigator.share({ files: [file] });
+        await navigator.share({ files: [file], title: tournament.name || "Slots" });
         setShareOk(true); setTimeout(() => setShareOk(false), 2500); return;
       }
       if (navigator.clipboard && window.ClipboardItem) {
