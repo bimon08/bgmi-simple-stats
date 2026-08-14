@@ -36,7 +36,7 @@ TASK:
 4. NEVER merge two position blocks into one group. Each block = one group.
 5. Do NOT calculate points. Only output positions and kills.
 
-OUTPUT — raw JSON only (no markdown fences, no explanation):
+OUTPUT — wrap the JSON in a \`\`\`json code block so it can be copied easily. No explanation before the JSON:
 
 {
   "matches_detected": 4,
@@ -60,7 +60,7 @@ RULES:
 - Player names EXACTLY as on screen
 - "players" = union of all players seen across all matches for that group
 - Skip matches where a team doesn't appear
-- After JSON, on a new line: "Groups: X | Matches: Y" + list any unmatched teams
+- After the JSON code block, on a new line: "Groups: X | Matches: Y" + list any unmatched teams
 
 I'll upload images now. Reply ONLY with "received" for each batch. Do NOT start analyzing until I say "ok".`;
 }
