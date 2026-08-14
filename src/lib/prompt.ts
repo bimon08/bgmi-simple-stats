@@ -20,7 +20,7 @@ ${teams.map((t, i) => {
 
   return `Extract BGMI scoreboard stats from screenshots I'll upload.
 
-Upload flow: I'll send screenshots in batches. Just acknowledge each batch. When I say "ok", analyze everything.
+Upload flow: I'll send screenshots in batches. For each batch, ONLY reply with the word "received" and nothing else. Do NOT analyze or process any images until I send a message that says exactly "ok". Only then should you analyze ALL uploaded images together.
 ${rosterSection}
 BGMI SCOREBOARD LAYOUT:
 - LEFT PANEL: #1 (crown) and #2 (silver) teams with player rows showing "[Name] ... [N finishes]"
@@ -62,5 +62,5 @@ RULES:
 - Skip matches where a team doesn't appear
 - After JSON, on a new line: "Groups: X | Matches: Y" + list any unmatched teams
 
-I'll upload images now. Say "ok" when ready to analyze.`;
+I'll upload images now. Reply ONLY with "received" for each batch. Do NOT start analyzing until I say "ok".`;
 }
