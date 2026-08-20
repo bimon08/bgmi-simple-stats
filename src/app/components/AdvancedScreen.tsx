@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { X, Scissors, ChevronRight, Trophy, ChevronDown, ChevronUp, Check, Settings2, Minus, Plus, Save, AlertTriangle, Trash2 } from "lucide-react";
 import { Tournament, StandingRow } from "@/lib/types";
 import { groupLabels } from "@/lib/groups";
@@ -51,8 +51,21 @@ export default function AdvancedScreen({ tournament, standings, save, onClose, o
   const [penaltyTeamId, setPenaltyTeamId] = useState("");
   const [penaltyPoints, setPenaltyPoints] = useState(3);
   const [penaltyReason, setPenaltyReason] = useState("");
+  const [teamDropdownOpen, setTeamDropdownOpen] = useState(false);
+  const teamDropdownRef = useRef<HTMLDivElement>(null);
   const penalties = tournament.penalties ?? {};
   const penaltyEntries = Object.entries(penalties).filter(([, pts]) => pts > 0);
+
+  // Close team dropdown on outside click
+  useEffect(() => {
+    if (!teamDropdownOpen) return;
+    const handler = (e: MouseEvent | TouchEvent) => {
+      if (teamDropdownRef.current && !teamDropdownRef.current.contains(e.target as Node)) setTeamDropdownOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    document.addEventListener("touchstart", handler);
+    return () => { document.removeEventListener("mousedown", handler); document.removeEventListener("touchstart", handler); };
+  }, [teamDropdownOpen]);
   const maxPerGroup = Math.min(...labels.map(l => activeTeams.filter(t => t.group === l).length).filter(n => n > 0), 99);
 
   const handleSaveSettings = () => {
@@ -329,18 +342,51 @@ export default function AdvancedScreen({ tournament, standings, save, onClose, o
                 <div className="space-y-3" style={{ borderTop: penaltyEntries.length > 0 ? "1px solid rgba(239,68,68,0.1)" : "none", paddingTop: penaltyEntries.length > 0 ? "12px" : 0 }}>
                   <p className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "rgba(248,113,113,0.5)" }}>Add Penalty</p>
                   
-                  {/* Team selector */}
-                  <select
-                    value={penaltyTeamId}
-                    onChange={e => setPenaltyTeamId(e.target.value)}
-                    className="w-full px-3 py-2.5 rounded-xl text-sm text-white focus:outline-none appearance-none"
-                    style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", caretColor: "#f87171" }}
-                  >
-                    <option value="" style={{ background: "#1a0e2e" }}>Select team...</option>
-                    {activeTeams.map(t => (
-                      <option key={t.id} value={t.id} style={{ background: "#1a0e2e" }}>{t.name}</option>
-                    ))}
-                  </select>
+                  {/* Team selector — custom dropdown */}
+                  <div ref={teamDropdownRef} className="relative">
+                    <button
+                      onClick={() => setTeamDropdownOpen(!teamDropdownOpen)}
+                      className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm text-left press-scale"
+                      style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)" }}
+                    >
+                      <span style={{ color: penaltyTeamId ? "#fff" : "rgba(255,255,255,0.35)" }}>
+                        {penaltyTeamId ? activeTeams.find(t => t.id === penaltyTeamId)?.name || "Select team..." : "Select team..."}
+                      </span>
+                      <ChevronDown
+                        className="h-3.5 w-3.5 transition-transform duration-150"
+                        style={{ color: "rgba(248,113,113,0.5)", transform: teamDropdownOpen ? "rotate(180deg)" : "none" }}
+                      />
+                    </button>
+                    {teamDropdownOpen && (
+                      <div
+                        className="absolute left-0 right-0 top-full mt-1.5 z-30 rounded-2xl overflow-hidden max-h-52 overflow-y-auto"
+                        style={{
+                          background: "rgba(15,5,25,0.95)",
+                          border: "1px solid rgba(239,68,68,0.2)",
+                          boxShadow: "0 16px 40px rgba(0,0,0,0.7)",
+                          backdropFilter: "blur(20px)",
+                        }}
+                      >
+                        {activeTeams.map((t, i) => {
+                          const isSelected = penaltyTeamId === t.id;
+                          return (
+                            <button
+                              key={t.id}
+                              onClick={() => { setPenaltyTeamId(t.id); setTeamDropdownOpen(false); }}
+                              className={`flex items-center justify-between w-full px-4 py-3 text-sm font-semibold transition-colors hover:bg-white/10 ${i < activeTeams.length - 1 ? "border-b border-white/[0.05]" : ""}`}
+                              style={{ color: isSelected ? "#f87171" : "rgba(255,255,255,0.75)" }}
+                            >
+                              {t.name}
+                              {isSelected && <Check className="h-3.5 w-3.5 shrink-0" strokeWidth={3} />}
+                            </button>
+                          );
+                        })}
+                        {activeTeams.length === 0 && (
+                          <p className="px-4 py-3 text-xs" style={{ color: "rgba(255,255,255,0.3)" }}>No active teams</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
 
                   {/* Points */}
                   <div className="flex items-center justify-between">
