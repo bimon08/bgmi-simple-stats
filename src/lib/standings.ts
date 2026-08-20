@@ -57,6 +57,16 @@ export function computeStandings(t: Tournament): StandingRow[] {
     });
   });
 
+  // Apply penalties (group stage only — finals are exempt)
+  const penalties = t.penalties ?? {};
+  rows.forEach((row) => {
+    const team = t.teams.find((tm) => tm.id === row.teamId);
+    if (team?.group === "final") return;
+    const pen = penalties[row.teamId] ?? 0;
+    row.totalPoints -= pen;
+    row.penalty = pen;
+  });
+
   rows.sort(compareTiebreaker);
   return rows;
 }

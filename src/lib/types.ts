@@ -66,6 +66,7 @@ export interface StandingRow {
   lastMatchPosition: number;
   positions: number[]; // per-match positions
   matchCount: number;
+  penalty?: number;    // penalty points deducted
 }
 
 /** Kill + placement point config */
@@ -108,4 +109,5 @@ export interface Tournament {
   };
   waGroupLinks?: Record<string, string>;  // Per-group WA links keyed by label ("A", "B"...)
   shareEditable?: boolean;                // Whether collaborators can edit (default true)
+  penalties?: Record<string, number>;     // teamId → penalty points deducted
 }

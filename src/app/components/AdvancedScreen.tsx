@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { X, Scissors, ChevronRight, Trophy, ChevronDown, ChevronUp, Check, Settings2, Minus, Plus, Save } from "lucide-react";
+import { X, Scissors, ChevronRight, Trophy, ChevronDown, ChevronUp, Check, Settings2, Minus, Plus, Save, AlertTriangle, Trash2 } from "lucide-react";
 import { Tournament, StandingRow } from "@/lib/types";
 import { groupLabels } from "@/lib/groups";
 import { compareTiebreaker } from "@/lib/points";
@@ -45,6 +45,14 @@ export default function AdvancedScreen({ tournament, standings, save, onClose, o
   const [showPreview, setShowPreview] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [localAdvance, setLocalAdvance] = useState(advPerGroup);
+
+  // Penalties state
+  const [showPenalties, setShowPenalties] = useState(false);
+  const [penaltyTeamId, setPenaltyTeamId] = useState("");
+  const [penaltyPoints, setPenaltyPoints] = useState(3);
+  const [penaltyReason, setPenaltyReason] = useState("");
+  const penalties = tournament.penalties ?? {};
+  const penaltyEntries = Object.entries(penalties).filter(([, pts]) => pts > 0);
   const maxPerGroup = Math.min(...labels.map(l => activeTeams.filter(t => t.group === l).length).filter(n => n > 0), 99);
 
   const handleSaveSettings = () => {
@@ -260,6 +268,131 @@ export default function AdvancedScreen({ tournament, standings, save, onClose, o
             </div>
           </div>
         )}
+
+        {/* ── Penalties Card ─────────────────────────────────── */}
+        <div className="rounded-2xl overflow-hidden" style={{ background: "rgba(239,68,68,0.04)", border: "1px solid rgba(239,68,68,0.15)" }}>
+          <button
+            onClick={() => setShowPenalties(!showPenalties)}
+            className="w-full flex items-center gap-4 p-5 text-left press-scale"
+          >
+            <div className="h-12 w-12 rounded-xl flex items-center justify-center shrink-0"
+              style={{ background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.25)" }}>
+              <AlertTriangle className="h-5 w-5" style={{ color: "#f87171" }} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-bold text-white">Penalties</p>
+              <p className="text-xs mt-0.5" style={{ color: "rgba(248,113,113,0.6)" }}>
+                {penaltyEntries.length > 0 ? `${penaltyEntries.length} active penalty${penaltyEntries.length !== 1 ? 'ies' : ''}` : 'Deduct points for rule violations'}
+              </p>
+            </div>
+            {showPenalties
+              ? <ChevronUp className="h-4 w-4 shrink-0" style={{ color: "rgba(248,113,113,0.4)" }} />
+              : <ChevronDown className="h-4 w-4 shrink-0" style={{ color: "rgba(248,113,113,0.4)" }} />}
+          </button>
+
+          <div style={{
+            display: "grid",
+            gridTemplateRows: showPenalties ? "1fr" : "0fr",
+            transition: "grid-template-rows 250ms cubic-bezier(0.4,0,0.2,1)",
+          }}>
+            <div style={{ overflow: "hidden" }}>
+              <div className="px-5 pb-5 space-y-4">
+                {/* Active penalties */}
+                {penaltyEntries.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "rgba(248,113,113,0.5)" }}>Active Penalties</p>
+                    {penaltyEntries.map(([teamId, pts]) => {
+                      const team = tournament.teams.find(t => t.id === teamId);
+                      return (
+                        <div key={teamId} className="flex items-center gap-3 px-3 py-2.5 rounded-xl" style={{ background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.1)" }}>
+                          <span className="flex-1 text-sm font-semibold text-white truncate">{team?.name || 'Unknown'}</span>
+                          <span className="text-xs font-bold" style={{ color: "#f87171" }}>−{pts} pts</span>
+                          <button
+                            onClick={() => {
+                              const updated = { ...penalties };
+                              delete updated[teamId];
+                              save({ ...tournament, penalties: updated });
+                              toast.success(`Penalty removed for ${team?.name || 'team'}`);
+                            }}
+                            className="h-7 w-7 rounded-lg flex items-center justify-center press-scale"
+                            style={{ background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.2)" }}
+                          >
+                            <Trash2 className="h-3 w-3" style={{ color: "#f87171" }} />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Add penalty form */}
+                <div className="space-y-3" style={{ borderTop: penaltyEntries.length > 0 ? "1px solid rgba(239,68,68,0.1)" : "none", paddingTop: penaltyEntries.length > 0 ? "12px" : 0 }}>
+                  <p className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "rgba(248,113,113,0.5)" }}>Add Penalty</p>
+                  
+                  {/* Team selector */}
+                  <select
+                    value={penaltyTeamId}
+                    onChange={e => setPenaltyTeamId(e.target.value)}
+                    className="w-full px-3 py-2.5 rounded-xl text-sm text-white focus:outline-none appearance-none"
+                    style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", caretColor: "#f87171" }}
+                  >
+                    <option value="" style={{ background: "#1a0e2e" }}>Select team...</option>
+                    {activeTeams.map(t => (
+                      <option key={t.id} value={t.id} style={{ background: "#1a0e2e" }}>{t.name}</option>
+                    ))}
+                  </select>
+
+                  {/* Points */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium" style={{ color: "#e2d9f3" }}>Points to deduct</span>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => setPenaltyPoints(Math.max(1, penaltyPoints - 1))}
+                        className="h-7 w-7 rounded-lg flex items-center justify-center press-scale"
+                        style={{ background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.25)", color: "#fca5a5" }}>
+                        <Minus className="h-3 w-3" />
+                      </button>
+                      <span className="text-sm font-bold text-white w-6 text-center">{penaltyPoints}</span>
+                      <button onClick={() => setPenaltyPoints(Math.min(99, penaltyPoints + 1))}
+                        className="h-7 w-7 rounded-lg flex items-center justify-center press-scale"
+                        style={{ background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.25)", color: "#fca5a5" }}>
+                        <Plus className="h-3 w-3" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Reason (optional) */}
+                  <input
+                    value={penaltyReason}
+                    onChange={e => setPenaltyReason(e.target.value)}
+                    placeholder="Reason (optional)"
+                    className="w-full px-3 py-2.5 rounded-xl text-sm text-white focus:outline-none"
+                    style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", caretColor: "#f87171" }}
+                  />
+
+                  {/* Apply button */}
+                  <button
+                    onClick={() => {
+                      if (!penaltyTeamId) { toast.error('Select a team'); return; }
+                      const team = tournament.teams.find(t => t.id === penaltyTeamId);
+                      const existing = penalties[penaltyTeamId] ?? 0;
+                      const updated = { ...penalties, [penaltyTeamId]: existing + penaltyPoints };
+                      save({ ...tournament, penalties: updated });
+                      toast.success(`−${penaltyPoints} pts applied to ${team?.name || 'team'}${penaltyReason ? ` (${penaltyReason})` : ''}`);
+                      setPenaltyTeamId('');
+                      setPenaltyPoints(3);
+                      setPenaltyReason('');
+                    }}
+                    disabled={!penaltyTeamId}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold text-white press-scale disabled:opacity-40"
+                    style={{ background: "linear-gradient(135deg,#ef4444,#dc2626)", boxShadow: "0 4px 20px rgba(239,68,68,0.3)" }}
+                  >
+                    <AlertTriangle className="h-3.5 w-3.5" /> Apply −{penaltyPoints} Penalty
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
 
         {/* Placeholder */}
         {!hasFinalStage && (
