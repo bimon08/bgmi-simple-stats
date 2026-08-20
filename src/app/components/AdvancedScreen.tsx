@@ -283,7 +283,7 @@ export default function AdvancedScreen({ tournament, standings, save, onClose, o
         )}
 
         {/* ── Penalties Card ─────────────────────────────────── */}
-        <div className="rounded-2xl overflow-hidden" style={{ background: "rgba(239,68,68,0.04)", border: "1px solid rgba(239,68,68,0.15)" }}>
+        <div className="rounded-2xl" style={{ background: "rgba(239,68,68,0.04)", border: "1px solid rgba(239,68,68,0.15)" }}>
           <button
             onClick={() => setShowPenalties(!showPenalties)}
             className="w-full flex items-center gap-4 p-5 text-left press-scale"
@@ -308,7 +308,7 @@ export default function AdvancedScreen({ tournament, standings, save, onClose, o
             gridTemplateRows: showPenalties ? "1fr" : "0fr",
             transition: "grid-template-rows 250ms cubic-bezier(0.4,0,0.2,1)",
           }}>
-            <div style={{ overflow: "hidden" }}>
+            <div style={{ overflow: showPenalties ? "visible" : "hidden" }}>
               <div className="px-5 pb-5 space-y-4">
                 {/* Active penalties */}
                 {penaltyEntries.length > 0 && (
